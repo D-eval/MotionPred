@@ -17,3 +17,9 @@
 ```
 python3 train_mt_multi_diffusion.py
 ```
+
+## 实时检测
+
+预测曲线
+
+![](./curve.png)
