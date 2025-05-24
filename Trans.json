@@ -1,0 +1,16 @@
+{
+    "transformer_d_model":64,
+    "num_joints":52,
+    "transformer_num_heads_spacial":4,
+    "transformer_num_heads_temporal": 4,
+    "transformer_dropout_rate":0.1,
+    "use_6d_outputs":true,
+    "transformer_window_length":120,
+    "abs_pos_encoding":false,
+    "transformer_num_layers":4,
+    "shared_templ_kv":false,
+    "temp_abs_pos_encoding":false,
+    "temp_rel_pos_encoding":false,
+    "residual_velocity":true,
+    "loss_type":"geodesic"
+}

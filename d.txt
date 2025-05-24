@@ -1,0 +1,6 @@
+python3 pretrain_post_mt_diffusion_encoder.py
+python3 -i train_post_mt_diffusion_decoder.py
+
+python3 -i valid_post_mt_diffusion.py
+
+export CUDA_VISIBLE_DEVICES=0
