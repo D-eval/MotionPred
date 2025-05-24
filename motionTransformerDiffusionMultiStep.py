@@ -1464,7 +1464,10 @@ class TransformerDiffusionMultiStep(nn.Module):
         tau_embedding = torch.Tensor(tau_embedding)
         self.register_buffer('tau_embedding', tau_embedding[0,:,0,:]) # (Tau,D)
         # v = rot_mat[1:] - rot_mat[:-1] 是 1e-5 量级的
-        self.noise_scale = nn.Parameter(torch.randn((num_joints,joint_size)) * 0.02) # (N,d)
+        noise_scale = torch.ones((num_joints,joint_size))
+        self.register_buffer('noise_scale', noise_scale)
+        # self.noise_scale =  nn.Parameter(torch.randn((num_joints,joint_size)) * 0.02) # (N,d)
+        # 这被证明是一个失败的设计
         
         self.pred_time_step = pred_time_step # 一次性预测(生成)的时间步数
     def encode(self, inputs):
