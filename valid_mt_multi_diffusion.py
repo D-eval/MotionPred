@@ -25,33 +25,6 @@ import os
 import time
 
 
-save_dir = '/home/vipuser/DL/Dataset50G/save'
-ckpt_name = 'ckpt_multi_diffusion.pth'
-dataset_dir = '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT'
-model_config_file = "TransMultiStepDiff_usehand.json"
-device = torch.device('cuda')
-# 加载验证集
-valid_set = AMASSDataset(dataset_dir, device, time_len=10, use_hand=True, target_fps=30, use_6d=True)
-valid_set.apply_train_valid_divide(train=False)
-# 读取模型配置
-with open(model_config_file, "r") as f:
-    config = json.load(f)
-# 加载模型
-model = TransformerDiffusionMultiStep(**config)
-print('后验信息长度:{}'.format(model.encoder.pool.query.shape[0]))
-print('输入序列长度:{}'.format(valid_set[0][0].shape[0]))
-assert valid_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验信息过多"
-# 加载模型参数
-if os.path.exists(os.path.join(save_dir,ckpt_name)):
-    save_dict = torch.load(os.path.join(save_dir,ckpt_name), map_location='cuda' if torch.cuda.is_available() else 'cpu')
-    model.load_state_dict(save_dict['params'])
-    print('加载参数成功')
-else:
-    save_dict = {'train_loss':[],
-                'valid_loss':[],
-                'params':None,
-                'config':config}
-    print('没有加载参数')
 # 向后预测长动作评估
 def get_multi_time_pred_loss(idx, pred_step=150, need_bvh=True):
     # 整个句子10 s 预测 5 s
@@ -96,39 +69,30 @@ def get_multi_time_pred_loss(idx, pred_step=150, need_bvh=True):
 # model.to(device)
 
 # 整个句子10 s 预测 5 s
-def visual_result(model, valid_set):
-    idx=0
+def visual_result(model, valid_set, idx=0):
     pred_step=150
-
-    # 整个句子10 s 预测 5 s
     rot_mat = valid_set[idx][0].to(device) # (T, N, 6)
     text = valid_set[idx][1]
     T = rot_mat.shape[0]
     T_history = T - pred_step
-
     rot_mat = rot_mat.unsqueeze(0) # (1, T, N, 6)
     history_poses = rot_mat[:, :T_history] # (1, T_h, N, 6)
-
     model.eval()
     with torch.no_grad():
         context = model.encode(rot_mat) # (1, C, D)
         pred_poses = model.sample(history_poses, context, pred_time_step=pred_step) # # (1, T_q, N, d_in)
         history_and_pred_poses = torch.cat([history_poses, pred_poses], dim=1)
         all_frame_loss = ((rot_mat[:,T_history:] - pred_poses)**2).mean(-1).mean(-1).squeeze(0) # (T_q,)
-        # history_poses (1, T, N, 6)
     _, _, N, _ = history_poses.shape
     output_rot_mat = torch.flatten(history_and_pred_poses,0,2) # (?,6)
     output_rot_mat = compute_rotation_matrix_from_ortho6d(output_rot_mat)
     output_rot_mat = torch.reshape(output_rot_mat, (T,N,9))
-
     rot_mat_flatten = torch.flatten(rot_mat,0,2) # (?,6)
     rot_mat_flatten = compute_rotation_matrix_from_ortho6d(rot_mat_flatten)
     rot_mat_flatten = torch.reshape(rot_mat_flatten, (T,N,9))
-
     valid_set.processor.write_bvh(output_rot_mat,filename='Ani_multiStep_diffusion_frame_{}_motion_{}.bvh'.format(pred_step,text[:-4]))
     valid_set.processor.write_bvh(rot_mat_flatten,filename='Ani_multiStep_diffusion_frame_{}_motion_{}_ground_truth.bvh'.format(pred_step,text[:-4]))
     print('成功保存bvh文件')
-
     fps = valid_set.target_fps
     interval = 1/fps
     x_times = np.arange(0,len(all_frame_loss)/fps,interval)
@@ -141,8 +105,6 @@ def visual_result(model, valid_set):
     plt.savefig(save_path)
     plt.close()
     print('保存多步预测MSE变化至 {}'.format(save_path))
-
-    # 画时间序列
     all_times = np.arange(0,output_rot_mat.shape[0]) * interval
     for idx in range(0,output_rot_mat.shape[1],3):
         plt.plot(all_times[:], output_rot_mat[:,idx,0].cpu(), label='joint {}'.format(idx))
@@ -150,9 +112,52 @@ def visual_result(model, valid_set):
     plt.ylabel('angle')
     save_path_motion = os.path.join(save_dir, "Curve_multiStep_diffusion_frame_{}_motion_{}.pdf".format(pred_step, text[:-4]))
     plt.savefig(save_path_motion)
+    plt.savefig('./curve.png')
     plt.close()
     print('保存多步预测曲线至 {}'.format(save_path_motion))
+    print('也保存到了 ./curve.png')
 
+
+save_dir = '/home/vipuser/DL/Dataset50G/save'
+ckpt_name = 'ckpt_multi_diffusion.pth'
+dataset_dir = '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT'
+model_config_file = "TransMultiStepDiff_usehand.json"
+device = torch.device('cuda')
+
+
+'''
+if __name__=="__main__":
+    print('valid main')
+    save_dir = '/home/vipuser/DL/Dataset50G/save'
+    ckpt_name = 'ckpt_multi_diffusion.pth'
+    dataset_dir = '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT'
+    model_config_file = "TransMultiStepDiff_usehand.json"
+    device = torch.device('cuda')
+    # 加载验证集
+    valid_set = AMASSDataset(dataset_dir, device, time_len=10, use_hand=True, target_fps=30, use_6d=True)
+    valid_set.apply_train_valid_divide(train=True)
+    # 读取模型配置
+    with open(model_config_file, "r") as f:
+        config = json.load(f)
+    # 加载模型
+    model = TransformerDiffusionMultiStep(**config)
+    print('后验信息长度:{}'.format(model.encoder.pool.query.shape[0]))
+    print('输入序列长度:{}'.format(valid_set[0][0].shape[0]))
+    assert valid_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验信息过多"
+    # 加载模型参数
+    if os.path.exists(os.path.join(save_dir,ckpt_name)):
+        save_dict = torch.load(os.path.join(save_dir,ckpt_name), map_location='cuda' if torch.cuda.is_available() else 'cpu')
+        model.load_state_dict(save_dict['params'])
+        print('加载参数成功')
+    else:
+        save_dict = {'train_loss':[],
+                    'valid_loss':[],
+                    'params':None,
+                    'config':config}
+        print('没有加载参数')
+    model.to(device)
+    visual_result(model,valid_set)
+'''
 
 '''
 inputs = rot_mat # (1, T, N, d_in)

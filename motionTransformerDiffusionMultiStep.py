@@ -390,7 +390,8 @@ class SepTemporalAttention(nn.Module):
         self.window_len=window_len
         self.num_joints=num_joints
         pos_encoding = positional_encoding(self.window_len,self.d_model)
-        self.pos_encoding = torch.Tensor(pos_encoding)
+        pos_encoding = torch.Tensor(pos_encoding)
+        self.register_buffer('pos_encoding',pos_encoding)
         self.temp_rel_pos_encoding = temp_rel_pos_encoding
         if self.shared_templ_kv:
             self.linear_k_all = nn.Linear(self.d_model,self.d_model)
@@ -523,8 +524,8 @@ class SepTemporalCrossAttention(nn.Module):
         self.temp_abs_pos_encoding=temp_abs_pos_encoding
         self.window_len=window_len
         self.num_joints=num_joints
-        pos_encoding = positional_encoding(self.window_len,self.d_model) # (1, T, 1, D)
-        self.pos_encoding = torch.Tensor(pos_encoding)
+        # pos_encoding = positional_encoding(self.window_len,self.d_model) # (1, T, 1, D)
+        # self.pos_encoding = torch.Tensor(pos_encoding)
         self.temp_rel_pos_encoding = temp_rel_pos_encoding
         if self.shared_templ_kv:
             self.linear_k_all = nn.Linear(self.d_model,self.d_model)
@@ -543,22 +544,24 @@ class SepTemporalCrossAttention(nn.Module):
             for _ in range(self.num_joints)
         ])
         self.linear_output = nn.Linear(self.d_model,self.d_model)
+        time_encoding = torch.Tensor(positional_encoding(self.window_len,self.d_model)) # (1,500,1,D)
+        self.register_buffer('time_encoding',time_encoding)
     def forward(self,eps_v,history_pos,mask):
         # eps_v: (B, T_q, N, D), noised v
-        # history_pos: (B, T, N, d)
+        # history_pos: (B, T, N, D)
         # mask: (T_q, T) look ahead mask
         # return: (B, T_q, N, D)
         B,T,N,d = history_pos.shape
         _,T_q,_,D = eps_v.shape # 只能为0和T
         if T_q==T:
             if self.temp_abs_pos_encoding:
-                eps_v[:,:] += self.pos_encoding[:, :T]
+                eps_v[:,:] += self.time_encoding[:, :T]
         elif T_q==1:
             if self.temp_abs_pos_encoding:
-                eps_v[:,0] += self.pos_encoding[:, T]
+                eps_v[:,0] += self.time_encoding[:, T]
         else:
             if self.temp_abs_pos_encoding:
-                eps_v[:,:] += self.pos_encoding[:, :T_q]
+                eps_v[:,:] += self.time_encoding[:, :T_q]
             # raise ValueError("eps_v 长度是")
         outputs = []
         attn_weights = []
@@ -574,6 +577,8 @@ class SepTemporalCrossAttention(nn.Module):
         for joint_idx in range(self.num_joints):
             joint_rep = eps_v[joint_idx]  # (B,T_q,D)
             joint_rep_history = history_pos[joint_idx]  # (B,T,D)
+            # 这里还要加时间编码
+            # joint_rep_history += self.time_encoding[:,:T,0,:]
             q = self.linear_q[joint_idx](joint_rep) # (B,T_q,D)
             if self.shared_templ_kv:
                 v = v_all[joint_idx]
@@ -581,6 +586,8 @@ class SepTemporalCrossAttention(nn.Module):
             else:
                 k = self.linear_k[joint_idx](joint_rep_history) # (B,T,D)
                 v = self.linear_v[joint_idx](joint_rep_history)
+            # k += self.time_encoding[:,:T,0,:]
+            # v += self.time_encoding[:,:T,0,:]
             # split it to several attention heads
             q = sep_split_heads(q, B, T_q, self.num_heads, self.d_model)
             # (B, H, T_q, D/h)
@@ -1018,7 +1025,7 @@ class TransformerDecoder(nn.Module):
         self.register_buffer('pos_encoding', torch.Tensor(pos_encoding))
         self.input_dropout = nn.Dropout(self.dropout_rate)
         self.para_transformer_layers = nn.ModuleList([
-            ParaTransformerDecoderLayer(joint_size, d_model, num_head_spacial, num_head_temporal, 
+            ParaTransformerDecoderLayer(d_model, d_model, num_head_spacial, num_head_temporal, 
                  num_joints, dropout_rate,
                  shared_templ_kv, temp_abs_pos_encoding,
                  window_len, temp_rel_pos_encoding,
@@ -1038,26 +1045,42 @@ class TransformerDecoder(nn.Module):
                 for _ in range(self.num_joints)
             ])
         self.tau_gate_proj = nn.Linear(self.d_model, d_model) #
+        
+        # self.history_embedding = nn.ModuleList([
+        #     nn.Linear(self.d_model,self.d_model)
+        #     for _ in range(self.num_joints)
+        # ])
             
-    def forward(self, poses_tau, history_poses, tau_emb, context=None, mask=None):
-        # poses_tau: (B, T_q, N, d)
-        # history_pose: (B, T, N, d)
+    def forward(self, poses_tau, prior_context, tau_emb, context=None, mask=None):
+        # poses_tau: (B, T_q, N, d_in)
+        # prior_context: (B, T, N, D) 历史姿态的编码
         # tau_emb: (B, D)
         # context: (B, C, D)
-        # return: noise_pred: (B, T_q, N, d)
-        T_q = poses_tau.shape[1]
-        B, T, N, d = history_poses.shape
+        # return: noise_pred: (B, T_q, N, d_in)
+        B, T, N, D = prior_context.shape
+        _, T_q, _, d = poses_tau.shape
         poses_tau = poses_tau.permute(2,0,1,3) # (N,B,T_q,d)
+        # prior_context = prior_context.permute(2,0,1,3) # (N,B,T,D)
         embed = []
         for joint_idx in range(self.num_joints):
             joint_rep = self.embeddings[joint_idx](poses_tau[joint_idx]) # (B,T,D)
             embed += [joint_rep]
-        
+            
         eps_pose = torch.stack(embed) # (N,B,T_q,D)
         eps_pose = eps_pose.permute(1,2,0,3) # (B,T_q,N,D)
+        
+        # history_embed = []
+        # for joint_idx in range(self.num_joints):
+        #     joint_rep = self.history_embedding[joint_idx](prior_context[joint_idx]) # (B,T,D)
+        #     history_embed += [joint_rep]
+        # 
+        # history_embed = torch.stack(history_embed) # (N,B,T,D)
+        # history_embed = history_embed.permute(1,2,0,3) # (B,T,N,D)
+        
 
-        if self.abs_pos_encoding:
-            eps_pose += self.pos_encoding[:, :T]
+        if self.abs_pos_encoding: # 必须填True
+            eps_pose += self.pos_encoding[:, :T_q]
+            # history_embed += self.pos_encoding[:,:T] # 已经在 history_encoder 中加入过了
             
         gate = torch.sigmoid(self.tau_gate_proj(tau_emb)) # (B, D)
         eps_pose = eps_pose + gate[:, None, None, :] * tau_emb[:, None, None, :]
@@ -1072,7 +1095,7 @@ class TransformerDecoder(nn.Module):
         # look_ahead_mask 是下三角，对角线为0
         look_ahead_mask = self.look_ahead_mask[:T, :T] if mask is None else mask
         for i in range(self.num_layers):
-            eps_pose, block1, block2 = self.para_transformer_layers[i](eps_pose, history_poses, look_ahead_mask, context)
+            eps_pose, block1, block2 = self.para_transformer_layers[i](eps_pose, prior_context, look_ahead_mask, context)
             attention_weights_temporal += [block1]  # (B, N, H, T)
             attention_weights_spatial += [block2]  # (B, H, N, N)
         # (B,T,N,D)
@@ -1158,27 +1181,6 @@ class TransformerDecoder(nn.Module):
             return loss
         else:
             return loss.mean()
-    def sample(self,inputs,prediction_steps):
-        # inputs: (b,seq_len,num_joints,joint_size)
-        # prediction_steps: int, 预测步数
-        # return: (b,prediction_steps,num_joints,joint_size), attentions用于分析注意力权重
-        self.eval()
-        predictions = []
-        attentions = []
-        seed_sequence = inputs
-        input_sequence = seed_sequence[:,-self.window_len:,...]
-        for step in range(prediction_steps):
-            model_outputs, attention = self.forward(input_sequence)
-
-            prediction = model_outputs[:,-1,...] # (b,num_joints,joint_size)
-            prediction = prediction.unsqueeze(1) # (b,1,num_joints,joint_size)
-            predictions += [prediction]
-            attentions += [attention]
-
-            input_sequence = torch.cat([input_sequence, prediction], dim=1)
-            input_sequence = input_sequence[:, -self.window_len:]
-        return torch.cat(predictions,dim=1), attentions
-
 
 
 def get_random_mask(B, T, mask_prob):
@@ -1210,7 +1212,8 @@ class FixShapeEncoder(nn.Module):
                  posterior_name,num_heads_posterior,
                  epsilon, tanh_scale,
                  dim_for_decoder,num_heads_decoder,
-                 pretrain_loss_type):
+                 pretrain_loss_type,
+                 use_attention_pool):
         super().__init__()
         self.num_joints = num_joints
         self.d_model = d_model
@@ -1237,7 +1240,7 @@ class FixShapeEncoder(nn.Module):
                  window_len, temp_rel_pos_encoding,
                  use_posteriors, posterior_name,
                  num_heads_posterior,
-                 epsilon, tanh_scale) # use_posteriors: False
+                 epsilon, tanh_scale,) # use_posteriors: False
             for _ in range(self.num_layers)
         ])
         
@@ -1246,14 +1249,16 @@ class FixShapeEncoder(nn.Module):
         self.pretrain_output = nn.Linear(self.d_model,joint_size)
         self.loss_type = pretrain_loss_type
         
+        self.use_attention_pool = use_attention_pool
         self.pointnet = nn.Linear(self.d_model,dim_out) # dim_out < (d_model * num_joints)
-        num_heads = num_heads_decoder
-        depth = self.d_model // num_heads
-        C = depth * (depth - 1) / 2
-        C = int(C)
-        self.pool = AttentionPool(cls_num=C, d_model=dim_out)
-        # (B, )
-        self.last_layernorm = nn.LayerNorm(dim_out)
+        if use_attention_pool:
+            num_heads = num_heads_decoder
+            depth = self.d_model // num_heads
+            C = depth * (depth - 1) / 2
+            C = int(C)
+            self.pool = AttentionPool(cls_num=C, d_model=dim_out)
+            # (B, )
+            self.last_layernorm = nn.LayerNorm(dim_out)
     def pretrain_forward(self, inputs, mask_prob = 0.3):
         # inputs: (B, T, N, dim_in), T较高
         # return: context (B, T, N, D)
@@ -1298,13 +1303,16 @@ class FixShapeEncoder(nn.Module):
         # return: context (B, T, N, D)
         # encode each rotation matrix to the feature space (d_model)
         # different joints have different encoding matrices
-        x, attention_weights, _ = self.pretrain_forward(x, 0)
+        x, attention_weights, _ = self.pretrain_forward(x, 0) # (B,T,N,D)
         x = self.pointnet(x) # (B,T,N,D_dec)
-        x = x.max(dim=2).values # (B, T, D_dec)
-        # 注意力池化
-        context = self.pool(x) # (B, d*(d-1)/2, D_dec)
-        #  d*(d-1)/2 是构建后验旋转参数的维度
-        context = self.last_layernorm(context)
+        if self.use_attention_pool:
+            x = x.max(dim=2).values # (B, T, D_dec)
+            # 注意力池化
+            context = self.pool(x) # (B, d*(d-1)/2, D_dec)
+            #  d*(d-1)/2 是构建后验旋转参数的维度
+            context = self.last_layernorm(context)
+        else:
+            context = x
         return context, attention_weights
     
     def get_pretrain_loss(self, inputs, mask_prob=0.3, return_each=False):
@@ -1448,7 +1456,21 @@ class TransformerDiffusionMultiStep(nn.Module):
                  posterior_name=None,num_heads_posterior=None,
                  epsilon=None, tanh_scale=None,
                  dim_for_decoder=d_model_decoder,num_heads_decoder=num_heads_posterior_decoder,
-                 pretrain_loss_type=pretrain_loss_type)
+                 pretrain_loss_type=pretrain_loss_type,
+                 use_attention_pool=True)
+        self.history_encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
+                 window_len,
+                 abs_pos_encoding_encoder,num_layers_encoder,
+                 dropout_rate_encoder,
+                 num_head_spacial_encoder, num_head_temporal_encoder,
+                 shared_templ_kv_encoder,
+                 temp_abs_pos_encoding_encoder,temp_rel_pos_encoding_encoder,
+                 use_posteriors=False,
+                 posterior_name=None,num_heads_posterior=None,
+                 epsilon=None, tanh_scale=None,
+                 dim_for_decoder=d_model_decoder,num_heads_decoder=num_heads_posterior_decoder,
+                 pretrain_loss_type=pretrain_loss_type,
+                 use_attention_pool=False) # (B,T,N,d_in)
         self.decoder = TransformerDecoder(num_joints, d_model_decoder, window_len,
                  abs_pos_encoding_decoder, num_layers_decoder, dropout_rate_decoder,
                  use_6d_outputs, joint_size, residual_velocity,
@@ -1481,13 +1503,19 @@ class TransformerDiffusionMultiStep(nn.Module):
         context, _ = self.encoder(inputs)
         return context
     
-    def decode(self, poses_tau, history_poses, tau_emb, context, mask):
+    def history_encode(self,history_poses):
+        # history_poses: (B, T, N, d_in)
+        # return: (B, T, N, D2)
+        prior_context, _ = self.history_encoder(history_poses)
+        return prior_context
+    
+    def decode(self, poses_tau, prior_context, tau_emb, context, mask):
         # poses_tau: (B, T_pred, N, d_in)
         # history_poses: (B, T, N, d_in)
         # tau_emb: (B, D)
         # context: (B, C, D2)
         # return: (B, T_pred, N, d_in)
-        outputs, _ = self.decoder(poses_tau, history_poses, tau_emb, context, mask)
+        outputs, _ = self.decoder(poses_tau, prior_context, tau_emb, context, mask)
         return outputs
     
     def forward(self, long_seq, inputs, t_pred=None, tau=None):
@@ -1539,20 +1567,24 @@ class TransformerDiffusionMultiStep(nn.Module):
         tau_embed = self.tau_embed(tau) # (B, D)
         
         mask = torch.zeros((T_pred,T)).to(inputs.device) # 没有mask
-        epsilon_pred_scaled = self.decode(poses_tau, history_poses, tau_embed, context, mask) # (B, T, N, d_in)
+        
+        prior_context = self.history_encode(history_poses) # (B,T,N,D)
+        
+        epsilon_pred_scaled = self.decode(poses_tau, prior_context, tau_embed, context, mask) # (B, T, N, d_in)
         epsilon_pred = epsilon_pred_scaled / self.noise_scale[None,None,:,:]
         loss = ((epsilon_pred - epsilon)**2).mean()
         return loss
 
-    def denoise(self, poses_tau, history_poses, context, tau, sampled_z=None):
+    # 以下是推理相关
+    def denoise(self, poses_tau, prior_context, context, tau, sampled_z=None):
         # 确保模型处于eval模式
         # poses_tau: (B, T_q, N, d_in) , 一般 T_q 等于 self.pred_time_step
         # tau: int 扩散模型时间
-        # history_poses: (B, T, N, d_in)
+        # prior_context: (B, T, N, D), 实际上是 prior_context
         # context: (B, C, D2)
         # sampled_z: (B, T_q, N, d_in)
         # return poses_tau_minus_one: (B, T_q, N, d_in) 去除一步噪声
-        B, T, N, d_in = history_poses.shape
+        B, T, N, D = prior_context.shape
         T_q = poses_tau.shape[1]
 
         beta_tau = self.diffusion_schedule.betas[tau]
@@ -1565,7 +1597,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         tau_tensor = torch.full((B,),tau,dtype=torch.long,device=poses_tau.device)
         tau_embed = self.tau_embed(tau_tensor) # (B, D)
         
-        epsilon_scaled_theta = self.decode(poses_tau, history_poses, tau_embed, context, mask)
+        epsilon_scaled_theta = self.decode(poses_tau, prior_context, tau_embed, context, mask)
         # (B, T_q, N, d_in)
         mu_tau = 1/alpha_tau.sqrt() * (poses_tau - beta_tau/(1-alpha_bar_tau).sqrt() * epsilon_scaled_theta)
         if tau == 1:
@@ -1574,7 +1606,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         var_tau = beta_tau * (1-alpha_bar_tau_minus_one) / (1-alpha_bar_tau)
         sigma_tau = var_tau.sqrt()
         sampled_z = torch.randn_like(poses_tau) if sampled_z is None else sampled_z
-        sampled_z *= self.noise_scale[None,None,:,:] #
+        sampled_z *= 0 #*self.noise_scale[None,None,:,:] #
         poses_tau_minus_one = mu_tau + sigma_tau * sampled_z
         return poses_tau_minus_one
 
@@ -1589,8 +1621,10 @@ class TransformerDiffusionMultiStep(nn.Module):
         poses_tau *= self.noise_scale[None,None,:,:]
         # 开始去噪
         Tau = self.diffusion_schedule.Tau # cosine选50步可以吗
+        # 计算 prior_context
+        prior_context = self.history_encode(history_poses)
         for tau in range(Tau,0,-1): # [Tau, Tau-1,..., 1]
-            poses_tau = self.denoise(poses_tau, history_poses, context, tau, sampled_z=sampled_z)
+            poses_tau = self.denoise(poses_tau, prior_context, context, tau, sampled_z=sampled_z)
         return poses_tau # (B, T_q, N, d_in)
 
     def get_pretrain_params(self):
@@ -1608,8 +1642,9 @@ class TransformerDiffusionMultiStep(nn.Module):
         # 获取训练模型参数
         pred_params = list(self.encoder.parameters())
         pred_params += list(self.decoder.parameters())
-        pred_params += list(self.tau_embedding)
-        pred_params += [self.noise_scale]
+        pred_params += list(self.history_encoder.parameters())
+        # pred_params += list(self.tau_embedding)
+        # pred_params += [self.noise_scale]
         return pred_params
 
 

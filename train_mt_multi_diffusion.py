@@ -7,7 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 import math
 import numpy as np
-from motionTransformerDiffusionMultiStep import TransformerDiffusionMultiStep
+from motionTransformerDiffusionMultiStep import TransformerDiffusionMultiStep, compute_rotation_matrix_from_ortho6d
 import json
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -15,6 +15,21 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
 from valid_mt_multi_diffusion import visual_result
+
+# 用
+import subprocess
+def push_loss_curve_to_github(files, help='Update loss curve'):
+    # push_loss_curve_to_github(['curve.pdf', 'loss.txt'])
+    try:
+        if isinstance(files, str):
+            files = [files]
+        subprocess.run(['git', 'add'] + files, check=True)
+        subprocess.run(['git', 'commit', '-m', help], check=True)
+        subprocess.run(['git', 'push'], check=True)
+        print(f"[Git] {files} pushed to GitHub.")
+    except subprocess.CalledProcessError as e:
+        print(f"[Git Error] {e}")
+
 
 import sys
 sys.path.append('/home/vipuser/DL/Dataset100G/AMASS')
@@ -118,7 +133,7 @@ print('模型大小为: {:.3f} GB'.format(model_size))
 # 加载模型参数
 if os.path.exists(os.path.join(save_dir,ckpt_name)):
     save_dict = torch.load(os.path.join(save_dir,ckpt_name), map_location='cuda' if torch.cuda.is_available() else 'cpu')
-    model.load_state_dict(save_dict['params'])
+    model.load_state_dict(save_dict['params'], strict=False)
     print('加载参数成功')
 else:
     save_dict = {'train_loss':[],
@@ -149,6 +164,10 @@ for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     plt.close()
     visual_result(valid_set=valid_set, model=model)
     print('结果可视化完成')
+    # 实时推送github，方便手机端远程查看
+    with open('./loss.txt','a') as f:
+        f.write('epoch:{} loss: {}\n'.format(epoch,train_loss))
+    push_loss_curve_to_github(['curve.png','loss.txt','README.md'])
 
 
 
