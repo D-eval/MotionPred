@@ -1140,7 +1140,6 @@ class TransformerDecoder(nn.Module):
         inputs = data[:,:-1,...]
         targets = data[:,1:,...]
         output, _ = self.forward(inputs)
-        # print(output)
         diff = targets - output # (B,seq_len,num_joints,joint_size)
         if self.loss_type == 'all_mean':
             loss = (diff ** 2).mean(dim=(1, 2, 3))
@@ -1423,6 +1422,29 @@ class DiffusionSchedule(nn.Module):
             raise NotImplementedError(f"Unsupported schedule: {schedule}")
 
 
+class HistoryEncoder(nn.Module):
+    def __init__(self,d_in,d_out,window_len,joint_num):
+        super().__init__()
+        self.window_len = window_len
+        self.joint_num = joint_num
+        time_encoding = positional_encoding(window_len,d_out) # (1,T,1,D)
+        self.register_buffer('time_encoding', torch.Tensor(time_encoding))
+        self.linears = nn.ModuleList([
+            nn.Linear(d_in,d_out)
+            for _ in range(joint_num)
+        ])
+    def forward(self,history_poses):
+        # history_poses: (B,T,N,d)
+        B,T,N,d = history_poses.shape
+        assert N==self.joint_num, "关节数目不匹配,模型期待{},得到了输入{}".format(self.joint_num,N)
+        history_poses = history_poses.permute(2,0,1,3) # (N,B,T,d)
+        output = []
+        for joint_idx in range(N):
+            output += [self.linears[joint_idx](history_poses[joint_idx])]
+        output = torch.stack(output) # (N,B,T,D)
+        output = output.permute(1,2,0,3) # (B,T,N,D)
+        output += self.time_encoding[:,:T]
+        return output, None # 为了匹配另一个encoder的输出格式
 
 
 class TransformerDiffusionMultiStep(nn.Module):
@@ -1443,7 +1465,8 @@ class TransformerDiffusionMultiStep(nn.Module):
                  posterior_name,
                  epsilon,tanh_scale,
                  Tau, schedule,
-                 pred_time_step):
+                 pred_time_step,
+                 use_simple_history_encoder):
         super().__init__()
         self.encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
                  window_len,
@@ -1458,19 +1481,22 @@ class TransformerDiffusionMultiStep(nn.Module):
                  dim_for_decoder=d_model_decoder,num_heads_decoder=num_heads_posterior_decoder,
                  pretrain_loss_type=pretrain_loss_type,
                  use_attention_pool=True)
-        self.history_encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
-                 window_len,
-                 abs_pos_encoding_encoder,num_layers_encoder,
-                 dropout_rate_encoder,
-                 num_head_spacial_encoder, num_head_temporal_encoder,
-                 shared_templ_kv_encoder,
-                 temp_abs_pos_encoding_encoder,temp_rel_pos_encoding_encoder,
-                 use_posteriors=False,
-                 posterior_name=None,num_heads_posterior=None,
-                 epsilon=None, tanh_scale=None,
-                 dim_for_decoder=d_model_decoder,num_heads_decoder=num_heads_posterior_decoder,
-                 pretrain_loss_type=pretrain_loss_type,
-                 use_attention_pool=False) # (B,T,N,d_in)
+        if use_simple_history_encoder: # 是否使用简单的历史编码器
+            self.history_encoder = HistoryEncoder(joint_size, d_model_decoder, window_len, num_joints)
+        else:
+            self.history_encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
+                     window_len,
+                     abs_pos_encoding_encoder,num_layers_encoder,
+                     dropout_rate_encoder,
+                     num_head_spacial_encoder, num_head_temporal_encoder,
+                     shared_templ_kv_encoder,
+                     temp_abs_pos_encoding_encoder,temp_rel_pos_encoding_encoder,
+                     use_posteriors=False,
+                     posterior_name=None,num_heads_posterior=None,
+                     epsilon=None, tanh_scale=None,
+                     dim_for_decoder=d_model_decoder,num_heads_decoder=num_heads_posterior_decoder,
+                     pretrain_loss_type=pretrain_loss_type,
+                     use_attention_pool=False) # (B,T,N,d_in)
         self.decoder = TransformerDecoder(num_joints, d_model_decoder, window_len,
                  abs_pos_encoding_decoder, num_layers_decoder, dropout_rate_decoder,
                  use_6d_outputs, joint_size, residual_velocity,
@@ -1546,9 +1572,12 @@ class TransformerDiffusionMultiStep(nn.Module):
         # tau: 扩散模型时间 (B,) {0,1,2,3,...,Tau-1}
         # pred_time_step: int 一次性预测步数
         pred_time_step = self.pred_time_step if pred_time_step is None else pred_time_step
+
+        poses_0 = inputs[:,-pred_time_step:]
         history_poses = inputs[:,:-pred_time_step]
         T = history_poses.shape[1]
-        poses_0 = inputs[:,-pred_time_step:]
+        
+        assert T==pred_time_step,"woc"
         
         beta_tau = self.diffusion_schedule.betas[tau] # (B,)
         alpha_tau = self.diffusion_schedule.alphas[tau] # (B,)

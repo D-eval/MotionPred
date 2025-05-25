@@ -32,11 +32,8 @@ def push_loss_curve_to_github(files, help='Update loss curve'):
 
 
 import sys
-sys.path.append('/home/vipuser/DL/Dataset100G/AMASS')
 from read_data import AMASSDataset, collate_fn_min_seq
-
-sys.path.append('/home/vipuser/DL/Dataset50G/Proj/Module')
-from GIFWriter import draw_gif_t
+from Module.GIFWriter import draw_gif_t
 
 import os
 import time
@@ -44,7 +41,7 @@ import time
 
 save_dir = '/home/vipuser/DL/Dataset50G/save'
 ckpt_name = 'ckpt_multi_diffusion.pth'
-dataset_dir = '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT'
+dataset_dir = '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT' # 去AMASS官网下载数据集
 model_config_file = "TransMultiStepDiff_usehand.json"
 device = torch.device('cuda')
 # 加载数据集
@@ -54,8 +51,8 @@ train_set.apply_train_valid_divide()
 valid_set = AMASSDataset(dataset_dir, device, time_len=10, use_hand=True, target_fps=30, use_6d=True)
 valid_set.apply_train_valid_divide(train=False)
 # 加载数据加载器
-train_loader = DataLoader(train_set, batch_size=64, collate_fn=collate_fn_min_seq, shuffle=True)
-valid_loader = DataLoader(train_set, batch_size=64, collate_fn=collate_fn_min_seq, shuffle=False)
+train_loader = DataLoader(train_set, batch_size=16, collate_fn=collate_fn_min_seq, shuffle=True)
+valid_loader = DataLoader(train_set, batch_size=16, collate_fn=collate_fn_min_seq, shuffle=False)
 # 读取模型配置
 with open(model_config_file, "r") as f:
     config = json.load(f)
@@ -170,6 +167,11 @@ for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     push_loss_curve_to_github(['curve.png','loss.txt','README.md'])
 
 
+
+
+for batch in train_loader:
+    rot_mats, texts = batch
+    break
 
 '''
 rot_mat = train_set[0][0]

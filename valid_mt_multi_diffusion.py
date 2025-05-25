@@ -15,11 +15,11 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
 import sys
-sys.path.append('/home/vipuser/DL/Dataset100G/AMASS')
+# sys.path.append('/home/vipuser/DL/Dataset100G/AMASS')
 from read_data import AMASSDataset, collate_fn_min_seq
 
-sys.path.append('/home/vipuser/DL/Dataset50G/Proj/Module')
-from GIFWriter import draw_gif_t
+# sys.path.append('/home/vipuser/DL/Dataset50G/Proj/Module')
+from Module.GIFWriter import draw_gif_t
 
 import os
 import time
