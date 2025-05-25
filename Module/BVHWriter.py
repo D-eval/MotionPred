@@ -1,5 +1,5 @@
 import numpy as np
-from ZXYRot import get_zxy_angle
+from .ZXYRot import get_zxy_angle
 
 '''
 times = 20

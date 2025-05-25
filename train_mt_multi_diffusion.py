@@ -63,7 +63,7 @@ print('输入序列长度:{}'.format(train_set[0][0].shape[0]))
 assert train_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验信息过多"
 params_to_train = model.get_train_params()
 # 加载模型优化器
-optimizer = torch.optim.Adam(params_to_train, lr=1e-4)
+optimizer = torch.optim.Adam(params_to_train, lr=1e-5)
 # 训练函数
 def train_one_epoch(model, train_loader, optimizer, device='cuda'):
     model.to(device)
