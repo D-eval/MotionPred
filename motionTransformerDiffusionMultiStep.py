@@ -11,6 +11,8 @@ import numpy as np
 
 import sys
 
+use_last_layernorm = True
+
 # sys.path.append('/home/vipuser/DL/Dataset100G/DL-3D-Upload/sutra/tensorFlow-project/motion-transformer')
 # from common.constants import Constants as C
 # from common.conversions import compute_rotation_matrix_from_ortho6d
@@ -1267,7 +1269,7 @@ class FixShapeEncoder(nn.Module):
             self.pool = AttentionPool(cls_num=C, d_model=dim_out)
             # (B, )
             self.last_layernorm = nn.LayerNorm(dim_out)
-    def pretrain_forward(self, inputs, mask_prob = 0.3):
+    def pretrain_forward(self, inputs, mask_prob = 0.3, mask=None):
         # inputs: (B, T, N, dim_in), T较高
         # return: context (B, T, N, D)
         # encode each rotation matrix to the feature space (d_model)
@@ -1295,7 +1297,7 @@ class FixShapeEncoder(nn.Module):
 
         # random_mask: (inp_seq_len, inp_seq_len)
         # 预测为1的位置
-        random_mask = get_random_mask(B,T,mask_prob) # return: (B, T)
+        random_mask = get_random_mask(B,T,mask_prob) if mask is None else mask # return: (B, T)
         random_mask = random_mask.to(x.device)
         for i in range(self.num_layers):
             x, block1, block2 = self.para_transformer_layers[i](x,random_mask,context=None,mask_type='random')
@@ -1527,6 +1529,12 @@ class TransformerDiffusionMultiStep(nn.Module):
         # 这被证明是一个失败的设计
         
         self.pred_time_step = pred_time_step # 一次性预测(生成)的时间步数
+        self.normer = Normer() # 输入的不必归一化，生成的须归一化
+        
+    # 外部调用方法: 
+    # forward, 计算loss
+    # sample, 用于生成
+        
     def encode(self, inputs):
         # inputs: (B, T, N, d_in)
         # let D1=dim_encoder, D2=dim_decoder, H2=num_heads_decoder
@@ -1586,6 +1594,9 @@ class TransformerDiffusionMultiStep(nn.Module):
         history_poses = inputs[:,:-pred_time_step]
         T = history_poses.shape[1]
         
+        self.normer.update_state(history_poses) # 更新均值方差 (B,1,N,D)
+        poses_0 = self.normer.norm_with_existed_state(poses_0) # 要预测的家伙不包含均值方差，因为history_poses已经包含了
+        
         assert T==pred_time_step,"woc"
         
         beta_tau = self.diffusion_schedule.betas[tau] # (B,)
@@ -1606,11 +1617,13 @@ class TransformerDiffusionMultiStep(nn.Module):
         
         mask = torch.zeros((T_pred,T)).to(inputs.device) # 没有mask
         
+        history_poses = self.normer.strengthen(history_poses) # 数据增强
         prior_context = self.history_encode(history_poses) # (B,T,N,D)
         
         epsilon_pred_scaled = self.decode(poses_tau, prior_context, tau_embed, context, mask) # (B, T, N, d_in)
         epsilon_pred = epsilon_pred_scaled / self.noise_scale[None,None,:,:]
         loss = ((epsilon_pred - epsilon)**2).mean()
+        self.normer.clear_state() # 清除状态，以防记忆混淆
         return loss
 
     # 以下是推理相关
@@ -1653,6 +1666,8 @@ class TransformerDiffusionMultiStep(nn.Module):
         # context: (B, C, D2)
         pred_time_step = self.pred_time_step if pred_time_step is None else pred_time_step
         B, T, N, d_in = history_poses.shape
+        
+        self.normer.update_state(history_poses) # 更新状态
         # 初始噪声
         poses_tau = torch.randn(B, pred_time_step, N, d_in).to(history_poses.device)
         # 噪声水平控制
@@ -1663,12 +1678,24 @@ class TransformerDiffusionMultiStep(nn.Module):
         prior_context = self.history_encode(history_poses)
         for tau in range(Tau,0,-1): # [Tau, Tau-1,..., 1]
             poses_tau = self.denoise(poses_tau, prior_context, context, tau, sampled_z=sampled_z)
+        poses_tau = self.normer.denorm(poses_tau)
+        self.normer.clear_state()
         return poses_tau # (B, T_q, N, d_in)
 
     def get_pretrain_params(self):
         # 无监督学习，mask_token预测
         # 获取 prediction_model, estimator.zl_embedding, estimator.post_enc 的参数给optim
         pred_params = list(self.encoder.parameters())
+        return pred_params
+
+    def get_history_encoder_pretrain_loss(self, history_poses, p_mask=0.1):
+        # history_poses (B,T,N,d)
+        strength_history_poses = self.normer.strengthen(history_poses, p=p_mask, return_mask=False)
+        loss = self.history_encoder.get_pretrain_loss(strength_history_poses, mask_prob=0.3)
+        return loss
+    
+    def get_history_encoder_params(self):
+        pred_params = list(self.history_encoder.parameters())
         return pred_params
 
     def get_pretrain_loss(self, long_seq, mask_prob):
@@ -1685,6 +1712,46 @@ class TransformerDiffusionMultiStep(nn.Module):
         # pred_params += [self.noise_scale]
         return pred_params
 
+
+class Normer:
+    def __init__(self):
+        # self.sha256 = None
+        self.mu = None
+        self.sigma = None
+    def strengthen(self,inputs,p=0.1,return_mask=False):
+        # inputs (B,T,N,d)
+        mask = self._strengthen_mask(inputs)
+        inputs = self._strengthen_noise(inputs)
+        if return_mask:
+            return inputs, mask
+        else:
+            return inputs * (~mask)
+    def _strengthen_mask(self,inputs,mask_prob=0.05):
+        # inputs: (B, T, N, d)
+        mask = (torch.rand_like(inputs, device=inputs.device) < mask_prob) # (B,T,N,d)
+        return mask
+    def _strengthen_noise(self, inputs, noise_level=0.05):
+        # 高斯噪声
+        noise = torch.randn_like(inputs, device=inputs.device) * noise_level
+        return inputs + noise
+    def norm(self,inputs):
+        # inputs (B,T,N,d)
+        self.mu = torch.mean(inputs,dim=1,keepdim=True) # (B,1,N,d)
+        self.sigma = torch.std(inputs,dim=1,keepdim=True)
+        return (inputs - self.mu) / (self.sigma + 1e-8)
+    def denorm(self,inputs_normed):
+        # inputs_normed (B,T1,N,d)
+        return inputs_normed * self.sigma + self.mu
+    def update_state(self,inputs):
+        # inputs (B,T,N,d)
+        self.mu = torch.mean(inputs,dim=1,keepdim=True) # (B,1,N,d)
+        self.sigma = torch.std(inputs,dim=1,keepdim=True)
+        # 更新状态
+    def clear_state(self):
+        self.mu = None
+        self.sigma = None
+    def norm_with_existed_state(self,inputs):
+        return (inputs - self.mu) / (self.sigma + 1e-8)
 
 
 # (B, C, D2) -> (B, C, D2)

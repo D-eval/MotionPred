@@ -7,7 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 import math
 import numpy as np
-from motionTransformerDiffusionMultiStep import TransformerDiffusionMultiStep, compute_rotation_matrix_from_ortho6d
+from motionTransformerDiffusionMultiStep import TransformerDiffusionMultiStep, compute_rotation_matrix_from_ortho6d, Normer
 import json
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -67,7 +67,6 @@ def get_multi_time_pred_loss(idx, pred_step=150, need_bvh=True):
 
 
 # model.to(device)
-
 # 整个句子10 s 预测 5 s
 def visual_result(model, valid_set, idx=0):
     pred_step=150
@@ -79,11 +78,11 @@ def visual_result(model, valid_set, idx=0):
     history_poses = rot_mat[:, :T_history] # (1, T_h, N, 6)
     model.eval()
     with torch.no_grad():
-        context = model.encode(rot_mat) # (1, C, D)
-        pred_poses = model.sample(history_poses, context, pred_time_step=pred_step) # # (1, T_q, N, d_in)
-        history_and_pred_poses = torch.cat([history_poses, pred_poses], dim=1)
+        # context = model.encode(rot_mat) # (1, C, D)
+        pred_poses = model.sample(history_poses, None, pred_time_step=pred_step) # # (1, T_q, N, d_in)
+        history_and_pred_poses = torch.cat([history_poses, pred_poses], dim=1) # (1, T, N, d)
         all_frame_loss = ((rot_mat[:,T_history:] - pred_poses)**2).mean(-1).mean(-1).squeeze(0) # (T_q,)
-    _, _, N, _ = history_poses.shape
+    _, _, N, _ = history_poses.shape #
     output_rot_mat = torch.flatten(history_and_pred_poses,0,2) # (?,6)
     output_rot_mat = compute_rotation_matrix_from_ortho6d(output_rot_mat)
     output_rot_mat = torch.reshape(output_rot_mat, (T,N,9))

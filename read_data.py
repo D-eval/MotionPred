@@ -192,7 +192,7 @@ def down_sample(seq, fps, target_fps):
     indices = torch.clamp(indices, max=seq.shape[0] - 1)
     return seq[indices]
 
-def collate_fn_min_seq(batch, input_frame_len=300):
+def collate_fn_min_seq(batch):
     """
     batch: list of tuples, each is (rot_mats, text)
         rot_mats: (T, 52, 9)
@@ -201,14 +201,14 @@ def collate_fn_min_seq(batch, input_frame_len=300):
         rot_mats_tensor: (batch_size, min_seq_len, 52, 9)
         text_list: list of str
     """
-    batch = [item for item in batch if item[0].shape[0] >= input_frame_len]
+    # batch = [item for item in batch if item[0].shape[0] >= input_frame_len]
     # min_len = min(item[0].shape[0] for item in batch)
     # min_len = min(min_len,120) # window_len 为120
     rot_mats_batch = []
     text_batch = []
     for rot_mats, text in batch:
         start_time = 0
-        rot_mats_batch.append(rot_mats[start_time:(start_time+input_frame_len)])  # truncate to min_len
+        rot_mats_batch.append(rot_mats)  # truncate to min_len
         text_batch.append(text)
     rot_mats_tensor = torch.stack(rot_mats_batch, dim=0)  # (B, min_len, 52, 9)
     return rot_mats_tensor, text_batch

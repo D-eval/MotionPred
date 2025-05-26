@@ -7,7 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 import math
 import numpy as np
-from motionTransformerDiffusionMultiStep import TransformerDiffusionMultiStep, compute_rotation_matrix_from_ortho6d
+from motionTransformerDiffusionMultiStep import TransformerDiffusionMultiStep, compute_rotation_matrix_from_ortho6d, Normer
 import json
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -58,12 +58,13 @@ with open(model_config_file, "r") as f:
     config = json.load(f)
 # 加载模型
 model = TransformerDiffusionMultiStep(**config)
+normer = Normer()
 print('后验信息长度:{}'.format(model.encoder.pool.query.shape[0]))
 print('输入序列长度:{}'.format(train_set[0][0].shape[0]))
 assert train_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验信息过多"
 params_to_train = model.get_train_params()
 # 加载模型优化器
-optimizer = torch.optim.Adam(params_to_train, lr=1e-5)
+optimizer = torch.optim.Adam(params_to_train, lr=1e-4)
 # 训练函数
 def train_one_epoch(model, train_loader, optimizer, device='cuda'):
     model.to(device)
@@ -85,6 +86,30 @@ def train_one_epoch(model, train_loader, optimizer, device='cuda'):
     final_avg_loss = epoch_loss / num_batches if num_batches > 0 else float('inf')
     print(f"Train Loss: {final_avg_loss:.4f}")
     return final_avg_loss
+
+params_to_pretrain = model.get_pretrain_params()
+optimizer_pretrain = torch.optim.Adam(params_to_pretrain, lr=1e-4)
+def pretrain_one_epoch(model, train_loader, optimizer, device='cuda'):
+    model.to(device)
+    model.train()
+    epoch_loss = 0.0
+    num_batches = 0
+    progress_bar = tqdm(train_loader, desc="Training", leave=False)
+    for batch in progress_bar:
+        rot_mats, texts = batch
+        optimizer.zero_grad()
+        loss = model.get_history_encoder_pretrain_loss(rot_mats[:,:150,:,:])
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        epoch_loss += loss.item()
+        num_batches += 1
+        avg_loss = epoch_loss / num_batches
+        progress_bar.set_postfix(loss=f"{avg_loss:.4f}")
+    final_avg_loss = epoch_loss / num_batches if num_batches > 0 else float('inf')
+    print(f"PreTrain Loss: {final_avg_loss:.4f}")
+    return final_avg_loss
+
 # 验证函数
 def valid_one_epoch(model, valid_loader, valid_set, need_visual=False):
     prediction_step = 60
@@ -95,7 +120,7 @@ def valid_one_epoch(model, valid_loader, valid_set, need_visual=False):
         progress_bar = tqdm(valid_loader, desc="Validing", leave=False)
         for batch in progress_bar:
             rot_mats, texts = batch
-            loss = model(rot_mats, rot_mats)
+            loss = model(None, rot_mats)
             epoch_loss += loss.item()
             num_batches += 1
             avg_loss = epoch_loss / num_batches
@@ -141,6 +166,19 @@ else:
 # 获取损失函数列表
 train_loss_all = save_dict['train_loss']
 valid_loss_all = save_dict['valid_loss']
+
+# 预训练 history_encoder
+num_epoch_pretrain = 5
+for epoch in range(num_epoch_pretrain):
+    print('epoch: ',epoch)
+    start_time = time.time()
+    train_loss = pretrain_one_epoch(model, train_loader, optimizer_pretrain)
+    # valid_loss = valid_one_epoch(model, valid_loader, valid_set, need_visual=False)
+    end_time = time.time()
+    epoch_time = end_time - start_time
+    print(f"Epoch {epoch} 用时: {epoch_time:.2f} 秒")
+
+print("预训练完成，训练扩散模型")
 # 继续训练
 num_epoch = 50
 for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
@@ -183,3 +221,12 @@ for i in range(1000):
     v = rot_mat[1:] - rot_mat[:-1] # 1e-5
     mu += v.mean()
 '''
+
+train_iter = iter(train_loader)
+batch = next(train_iter)
+rot_mats, texts = batch
+normed_input = normer.norm(rot_mats)
+mu1 = normer.mu
+
+normed_input = normer.norm(train_set[1][0].unsqueeze(0))
+mu2 = normer.mu

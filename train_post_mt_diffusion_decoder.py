@@ -7,7 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 import math
 import numpy as np
-from motionTransformerDiffusion import TransformerDiffusion
+from motionTransformerDiffusion import TransformerDiffusion, Normer
 import json
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -44,6 +44,7 @@ with open(model_config_file, "r") as f:
     config = json.load(f)
 # 加载模型
 model = TransformerDiffusion(**config)
+normer = Normer()
 print('后验信息长度:{}'.format(model.encoder.pool.query.shape[0]))
 print('输入序列长度:{}'.format(train_set[0][0].shape[0]))
 assert train_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验信息过多"
