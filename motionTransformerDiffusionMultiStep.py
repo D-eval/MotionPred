@@ -953,11 +953,14 @@ class ParaTransformerDecoderLayer(nn.Module):
         temporal_out = self.ln_temporal(attn1 + eps_v)
         
         # spatial
-        attn2, attn_weights_block2 = self.spatial_attn(eps_v)
+        attn2, attn_weights_block2 = self.spatial_attn(temporal_out)
         attn2 = self.dropout_spatial(attn2)
-        spatial_out = self.ln_spatial(attn2 + eps_v)
+        if use_self_layernorm:
+            spatial_out = self.ln_spatial(attn2 + temporal_out)
+        else:
+            spatial_out = attn2 + temporal_out
         
-        out = temporal_out + spatial_out
+        out = spatial_out
         
         # self attn
         mask_self_attn = torch.zeros((T_q,T_q)).to(eps_v.device)
