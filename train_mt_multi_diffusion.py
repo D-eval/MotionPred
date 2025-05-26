@@ -167,6 +167,7 @@ else:
 train_loss_all = save_dict['train_loss']
 valid_loss_all = save_dict['valid_loss']
 
+print("开始预训练")
 # 预训练 history_encoder
 num_epoch_pretrain = 5
 for epoch in range(num_epoch_pretrain):
