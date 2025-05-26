@@ -17,7 +17,6 @@ import sys
 
 
 
-
 def normalize_vector(v, return_mag=False):
     # v: (batch_size, n)
     v_mag = torch.norm(v, dim=-1, keepdim=True)  # (batch_size, 1)
@@ -940,7 +939,7 @@ class ParaTransformerDecoderLayer(nn.Module):
             self.ln_posterior = nn.LayerNorm(self.d_model)
         self.use_posteriors = use_posteriors
 
-    def forward(self, eps_v, history_pose, mask, context):
+    def forward(self, eps_v, history_pose, mask, context, use_self_layernorm=True):
         # eps_v: (B, T_q, N, D) # T_q间进行self_attn
         # history_pose: (B, T, N, D)
         # context: (B, C, D)
@@ -964,7 +963,10 @@ class ParaTransformerDecoderLayer(nn.Module):
         mask_self_attn = torch.zeros((T_q,T_q)).to(eps_v.device)
         attn3, attn_weights_block3 = self.temporal_self_attn(out, mask_self_attn, "look_ahead") # 并非look_ahead，只是这样写而已。
         attn3 = self.dropout_merge(attn3)
-        out = self.ln_merge(attn3 + out)
+        if use_self_layernorm:
+            out = self.ln_merge(attn3 + out)
+        else:
+            out = attn3 + out
         
         # 后验修正
         if self.use_posteriors:
@@ -1095,7 +1097,11 @@ class TransformerDecoder(nn.Module):
         # look_ahead_mask 是下三角，对角线为0
         look_ahead_mask = self.look_ahead_mask[:T, :T] if mask is None else mask
         for i in range(self.num_layers):
-            eps_pose, block1, block2 = self.para_transformer_layers[i](eps_pose, prior_context, look_ahead_mask, context)
+            # use_self_layernorm
+            if (i < self.num_layers-1):
+                eps_pose, block1, block2 = self.para_transformer_layers[i](eps_pose, prior_context, look_ahead_mask, context)
+            else:
+                eps_pose, block1, block2 = self.para_transformer_layers[i](eps_pose, prior_context, look_ahead_mask, context, use_self_layernorm=False)
             attention_weights_temporal += [block1]  # (B, N, H, T)
             attention_weights_spatial += [block2]  # (B, H, N, N)
         # (B,T,N,D)
