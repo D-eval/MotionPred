@@ -1714,8 +1714,8 @@ class TransformerDiffusionMultiStep(nn.Module):
 
     def get_train_params_without_encoder(self):
         # 获取训练模型参数
+        pred_params = list(self.decoder.parameters())
         # pred_params = list(self.encoder.parameters())
-        pred_params += list(self.decoder.parameters())
         # pred_params += list(self.history_encoder.parameters())
         # pred_params += list(self.tau_embedding)
         # pred_params += [self.noise_scale]
