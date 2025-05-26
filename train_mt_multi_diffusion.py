@@ -194,7 +194,7 @@ for epoch in range(num_epoch_pretrain):
 
 print("预训练完成，训练扩散模型")
 # 继续训练
-train_loader = DataLoader(train_set, batch_size=20, collate_fn=collate_fn_min_seq, shuffle=True)
+train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True)
 num_epoch = 10
 for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     print('epoch: ',epoch)
@@ -221,10 +221,11 @@ for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
 
 
 
-
+'''
 for batch in train_loader:
     rot_mats, texts = batch
     break
+'''
 
 '''
 rot_mat = train_set[0][0]
@@ -237,6 +238,7 @@ for i in range(1000):
     mu += v.mean()
 '''
 
+'''
 train_iter = iter(train_loader)
 batch = next(train_iter)
 rot_mats, texts = batch
@@ -245,3 +247,4 @@ mu1 = normer.mu
 
 normed_input = normer.norm(train_set[1][0].unsqueeze(0))
 mu2 = normer.mu
+'''

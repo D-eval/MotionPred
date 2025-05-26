@@ -1617,7 +1617,10 @@ class TransformerDiffusionMultiStep(nn.Module):
         
         mask = torch.zeros((T_pred,T)).to(inputs.device) # 没有mask
         
-        history_poses = self.normer.strengthen(history_poses) # 数据增强
+        history_poses = self.normer.norm_with_existed_state(history_poses)
+        history_poses = self.normer._strengthen_noise(history_poses) # 数据增强
+        history_poses = self.normer.denorm(history_poses)
+        
         prior_context = self.history_encode(history_poses) # (B,T,N,D)
         
         epsilon_pred_scaled = self.decode(poses_tau, prior_context, tau_embed, context, mask) # (B, T, N, d_in)
