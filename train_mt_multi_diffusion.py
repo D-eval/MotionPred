@@ -41,7 +41,10 @@ import time
 
 save_dir = '/home/vipuser/DL/Dataset50G/save'
 ckpt_name = 'ckpt_multi_diffusion.pth'
-dataset_dir = '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT' # 去AMASS官网下载数据集
+dataset_dir = ['/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT',
+               '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/CMU',
+               '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/BMLmovi',
+               '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/ACCAD'] # 去AMASS官网下载数据集
 model_config_file = "TransMultiStepDiff_usehand.json"
 device = torch.device('cuda')
 # 加载数据集
@@ -62,8 +65,10 @@ normer = Normer()
 print('后验信息长度:{}'.format(model.encoder.pool.query.shape[0]))
 print('输入序列长度:{}'.format(train_set[0][0].shape[0]))
 assert train_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验信息过多"
-params_to_train = model.get_train_params()
+
 # 加载模型优化器
+# pretrain后冻结encoder
+params_to_train = model.get_train_params_without_encoder()
 optimizer = torch.optim.Adam(params_to_train, lr=1e-4)
 # 训练函数
 def train_one_epoch(model, train_loader, optimizer, device='cuda'):
@@ -87,7 +92,7 @@ def train_one_epoch(model, train_loader, optimizer, device='cuda'):
     print(f"Train Loss: {final_avg_loss:.4f}")
     return final_avg_loss
 
-params_to_pretrain = model.get_pretrain_params()
+params_to_pretrain = model.get_history_encoder_params()
 optimizer_pretrain = torch.optim.Adam(params_to_pretrain, lr=1e-4)
 def pretrain_one_epoch(model, train_loader, optimizer, device='cuda'):
     model.to(device)
@@ -167,7 +172,9 @@ else:
 train_loss_all = save_dict['train_loss']
 valid_loss_all = save_dict['valid_loss']
 
+'''
 print("开始预训练")
+train_loader = DataLoader(train_set, batch_size=64, collate_fn=collate_fn_min_seq, shuffle=True)
 # 预训练 history_encoder
 num_epoch_pretrain = 5
 for epoch in range(num_epoch_pretrain):
@@ -178,10 +185,17 @@ for epoch in range(num_epoch_pretrain):
     end_time = time.time()
     epoch_time = end_time - start_time
     print(f"Epoch {epoch} 用时: {epoch_time:.2f} 秒")
+    save_dict['params'] = model.state_dict()
+    torch.save(save_dict, os.path.join(save_dir,ckpt_name))
+    with open('./pretrain_loss.txt','a') as f:
+        f.write('epoch:{} loss: {}\n'.format(epoch,train_loss))
+    push_loss_curve_to_github(['pretrain_loss.txt'])
+'''
 
 print("预训练完成，训练扩散模型")
 # 继续训练
-num_epoch = 50
+train_loader = DataLoader(train_set, batch_size=20, collate_fn=collate_fn_min_seq, shuffle=True)
+num_epoch = 10
 for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     print('epoch: ',epoch)
     start_time = time.time()

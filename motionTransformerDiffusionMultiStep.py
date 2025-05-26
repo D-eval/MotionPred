@@ -1688,10 +1688,10 @@ class TransformerDiffusionMultiStep(nn.Module):
         pred_params = list(self.encoder.parameters())
         return pred_params
 
-    def get_history_encoder_pretrain_loss(self, history_poses, p_mask=0.1):
+    def get_history_encoder_pretrain_loss(self, history_poses, p_mask=0.3):
         # history_poses (B,T,N,d)
-        strength_history_poses = self.normer.strengthen(history_poses, p=p_mask, return_mask=False)
-        loss = self.history_encoder.get_pretrain_loss(strength_history_poses, mask_prob=0.3)
+        # strength_history_poses = self.normer.strengthen(history_poses, p=p_mask, return_mask=False)
+        loss = self.history_encoder.get_pretrain_loss(history_poses, mask_prob=p_mask)
         return loss
     
     def get_history_encoder_params(self):
@@ -1712,6 +1712,14 @@ class TransformerDiffusionMultiStep(nn.Module):
         # pred_params += [self.noise_scale]
         return pred_params
 
+    def get_train_params_without_encoder(self):
+        # 获取训练模型参数
+        # pred_params = list(self.encoder.parameters())
+        pred_params += list(self.decoder.parameters())
+        # pred_params += list(self.history_encoder.parameters())
+        # pred_params += list(self.tau_embedding)
+        # pred_params += [self.noise_scale]
+        return pred_params
 
 class Normer:
     def __init__(self):

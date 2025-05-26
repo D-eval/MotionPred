@@ -264,26 +264,57 @@ class AMASSDataset(Dataset):
         self.target_fps = target_fps
         self.use_6d = use_6d
         self.samples = []
-        for subdir, _, files in os.walk(root_dir):
-            for file in files:
-                if file.endswith('_poses.npz'):
-                    npz_path = os.path.join(subdir, file)
-                    bdata = np.load(npz_path)
-                    
-                    full_pose = bdata['poses']
-                    fps = int(bdata['mocap_framerate'].item())
-                    
-                    full_pose = down_sample(full_pose, fps, target_fps)
-                    pose_len = full_pose.shape[0]
-                    
-                    # 是下采样后的start_idx
-                    start_idxs = get_all_start_idx(pose_len, self.time_len*target_fps)
-                    if start_idxs is not None:
-                        for start_idx in start_idxs:
-                            self.samples.append((npz_path,file,start_idx))
+        if isinstance(root_dir, list):
+            for root_dir_temp in root_dir:
+                for subdir, _, files in os.walk(root_dir_temp):
+                    for file in files:
+                        if file.endswith('_poses.npz'):
+                            npz_path = os.path.join(subdir, file)
+                            bdata = np.load(npz_path)
+                            
+                            full_pose = bdata['poses']
+                            fps = int(bdata['mocap_framerate'].item())
+                            
+                            full_pose = down_sample(full_pose, fps, target_fps)
+                            pose_len = full_pose.shape[0]
+                            
+                            # 是下采样后的start_idx
+                            start_idxs = get_all_start_idx(pose_len, self.time_len*target_fps)
+                            if start_idxs is not None:
+                                for start_idx in start_idxs:
+                                    self.samples.append((npz_path,file,start_idx))
+        else:
+            for subdir, _, files in os.walk(root_dir):
+                for file in files:
+                    if file.endswith('_poses.npz'):
+                        npz_path = os.path.join(subdir, file)
+                        bdata = np.load(npz_path)
+                        
+                        full_pose = bdata['poses']
+                        fps = int(bdata['mocap_framerate'].item())
+                        
+                        full_pose = down_sample(full_pose, fps, target_fps)
+                        pose_len = full_pose.shape[0]
+                        
+                        # 是下采样后的start_idx
+                        start_idxs = get_all_start_idx(pose_len, self.time_len*target_fps)
+                        if start_idxs is not None:
+                            for start_idx in start_idxs:
+                                self.samples.append((npz_path,file,start_idx))
         print('数据集创建成功，共 {} 条数据，单条数据时间长度 {} 秒，采样率 {}Hz。'.format(len(self.samples), self.time_len, target_fps))
         self.processor = Processor(device,use_hand=use_hand)
-        report_dataset(root_dir=root_dir, datasetname=root_dir.split('/')[-1])
+        
+        if isinstance(root_dir, list):
+            datasetname=[]
+            for root_dir_temp in root_dir:
+                datasetname.append(root_dir_temp.split('/')[-1])
+            datasetname = '+'.join(datasetname)
+            # report_dataset(root_dir='+'.join(root_dir), datasetname=datasetname)
+        else:
+            datasetname=root_dir.split('/')[-1]
+            report_dataset(root_dir=root_dir, datasetname=datasetname)
+        
+        self.datasetname = datasetname
         
     def __len__(self):
         return len(self.samples)
@@ -310,7 +341,10 @@ class AMASSDataset(Dataset):
         # mode: {0,1} 1为train, 0为valid
         # 在 root_dir 下寻找 divide.pkl文件
         # 有的话读取, 没有的话创建
-        divide_path = os.path.join(self.root_dir, 'divide.pkl')
+        if isinstance(self.root_dir,list):
+            divide_path = os.path.join('./train_valid_divide', '{}.pkl'.format(self.datasetname))
+        else:
+            divide_path = os.path.join(self.root_dir, 'divide.pkl')
         total = len(self.samples)
         all_indices = list(range(total))
         if os.path.exists(divide_path):
