@@ -194,7 +194,7 @@ for epoch in range(num_epoch_pretrain):
 
 print("预训练完成，训练扩散模型")
 # 继续训练
-train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True)
+train_loader = DataLoader(train_set, batch_size=36, collate_fn=collate_fn_min_seq, shuffle=True)
 num_epoch = 10
 for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     print('epoch: ',epoch)
