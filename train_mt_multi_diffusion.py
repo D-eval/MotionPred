@@ -74,7 +74,7 @@ def train_one_epoch(model, train_loader, optimizer, device='cuda'):
     for batch in progress_bar:
         rot_mats, texts = batch
         optimizer.zero_grad()
-        loss = model(rot_mats, rot_mats)
+        loss = model(None, rot_mats)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
