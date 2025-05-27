@@ -27,3 +27,7 @@ python3 train_mt_multi_diffusion.py
 真实曲线
 
 ![](./curve_real.png)
+
+## 方法提出
+
+我们希望提出了一种能够建模不确定性的多步预测方法，其中未来动作的不确定性由扩散模型的采样来决定。
