@@ -69,7 +69,7 @@ assert train_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验�
 # 加载模型优化器
 # pretrain后冻结encoder
 params_to_train = model.get_train_params_without_encoder()
-optimizer = torch.optim.Adam(params_to_train, lr=1e-4)
+optimizer = torch.optim.Adam(params_to_train, lr=1e-5)
 # 训练函数
 def train_one_epoch(model, train_loader, optimizer, device='cuda'):
     model.to(device)
@@ -194,9 +194,10 @@ for epoch in range(num_epoch_pretrain):
 
 print("预训练完成，训练扩散模型")
 # 继续训练
-train_loader = DataLoader(train_set, batch_size=36, collate_fn=collate_fn_min_seq, shuffle=True)
+train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True)
 num_epoch = 10
 for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
+    train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True) # 每个epoch shuffle一下
     print('epoch: ',epoch)
     start_time = time.time()
     train_loss = train_one_epoch(model, train_loader, optimizer)

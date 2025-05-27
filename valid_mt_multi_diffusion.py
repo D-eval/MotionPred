@@ -113,6 +113,14 @@ def visual_result(model, valid_set, idx=0):
     plt.savefig(save_path_motion)
     plt.savefig('./curve.png')
     plt.close()
+    
+    for idx in range(0,rot_mat_flatten.shape[1],3):
+        plt.plot(all_times[:], rot_mat_flatten[:,idx,0].cpu(), label='joint {}'.format(idx))
+    plt.xlabel('time (seconds)')
+    plt.ylabel('angle')
+    plt.savefig('./curve_real.png')
+    plt.close()
+    
     print('保存多步预测曲线至 {}'.format(save_path_motion))
     print('也保存到了 ./curve.png')
 

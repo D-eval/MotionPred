@@ -1005,7 +1005,8 @@ class TransformerDecoder(nn.Module):
                  temp_abs_pos_encoding,temp_rel_pos_encoding,
                  use_posteriors,
                  posterior_name,num_heads_posterior,
-                 epsilon,tanh_scale):
+                 epsilon,tanh_scale,
+                 need_output_bias):
         super().__init__()
         
         self.num_joints = num_joints
@@ -1048,7 +1049,7 @@ class TransformerDecoder(nn.Module):
             ])
         else:
             self.output_linears = nn.ModuleList([
-                nn.Linear(self.d_model,6)
+                nn.Linear(self.d_model,6, bias=need_output_bias)
                 for _ in range(self.num_joints)
             ])
         self.tau_gate_proj = nn.Linear(self.d_model, d_model) #
@@ -1477,7 +1478,9 @@ class TransformerDiffusionMultiStep(nn.Module):
                  epsilon,tanh_scale,
                  Tau, schedule,
                  pred_time_step,
-                 use_simple_history_encoder):
+                 use_simple_history_encoder,
+                 need_output_bias,
+                 need_normer):
         super().__init__()
         self.encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
                  window_len,
@@ -1517,7 +1520,8 @@ class TransformerDiffusionMultiStep(nn.Module):
                  temp_abs_pos_encoding_decoder,temp_rel_pos_encoding_decoder,
                  use_posteriors=True,
                  posterior_name=posterior_name,num_heads_posterior=num_heads_posterior_decoder,
-                 epsilon=epsilon,tanh_scale=tanh_scale)
+                 epsilon=epsilon,tanh_scale=tanh_scale,
+                 need_output_bias=need_output_bias)
         self.diffusion_schedule = DiffusionSchedule(Tau, schedule)
         tau_embedding = positional_encoding(Tau, d_model_decoder) # (1,Tau,1,D)
         tau_embedding = torch.Tensor(tau_embedding)
@@ -1529,7 +1533,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         # 这被证明是一个失败的设计
         
         self.pred_time_step = pred_time_step # 一次性预测(生成)的时间步数
-        self.normer = Normer() # 输入的不必归一化，生成的须归一化
+        self.normer = Normer() if need_normer else NotNormer()# 输入的不必归一化，生成的须归一化
         
     # 外部调用方法: 
     # forward, 计算loss
@@ -1595,6 +1599,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         T = history_poses.shape[1]
         
         self.normer.update_state(history_poses) # 更新均值方差 (B,1,N,D)
+        # 别用数据增强 history_poses = self.normer.strengthen(history_poses)
         poses_0 = self.normer.norm_with_existed_state(poses_0) # 要预测的家伙不包含均值方差，因为history_poses已经包含了
         
         assert T==pred_time_step,"woc"
@@ -1617,9 +1622,9 @@ class TransformerDiffusionMultiStep(nn.Module):
         
         mask = torch.zeros((T_pred,T)).to(inputs.device) # 没有mask
         
-        history_poses = self.normer.norm_with_existed_state(history_poses)
-        history_poses = self.normer._strengthen_noise(history_poses) # 数据增强
-        history_poses = self.normer.denorm(history_poses)
+        # history_poses = self.normer.norm_with_existed_state(history_poses)
+        # history_poses = self.normer._strengthen_noise(history_poses) # 数据增强
+        # history_poses = self.normer.denorm(history_poses)
         
         prior_context = self.history_encode(history_poses) # (B,T,N,D)
         
@@ -1660,7 +1665,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         var_tau = beta_tau * (1-alpha_bar_tau_minus_one) / (1-alpha_bar_tau)
         sigma_tau = var_tau.sqrt()
         sampled_z = torch.randn_like(poses_tau) if sampled_z is None else sampled_z
-        sampled_z *= 0 #*self.noise_scale[None,None,:,:] #
+        sampled_z *= 0.1 #*self.noise_scale[None,None,:,:] #
         poses_tau_minus_one = mu_tau + sigma_tau * sampled_z
         return poses_tau_minus_one
 
@@ -1723,6 +1728,26 @@ class TransformerDiffusionMultiStep(nn.Module):
         # pred_params += list(self.tau_embedding)
         # pred_params += [self.noise_scale]
         return pred_params
+
+# 作为Normer的对比
+class NotNormer:
+    def __init__(self):
+        pass
+    def norm(self,inputs):
+        # inputs (B,T,N,d)
+        return inputs
+    def denorm(self,inputs_normed):
+        # inputs_normed (B,T1,N,d)
+        return inputs_normed
+    def update_state(self,inputs):
+        # inputs (B,T,N,d)
+        pass
+    def clear_state(self):
+        pass
+    def norm_with_existed_state(self,inputs):
+        return inputs
+
+    
 
 class Normer:
     def __init__(self):
