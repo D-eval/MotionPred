@@ -44,7 +44,8 @@ ckpt_name = 'ckpt_multi_diffusion.pth'
 dataset_dir = ['/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT',
                '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/CMU',
                '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/BMLmovi',
-               '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/ACCAD'] # 去AMASS官网下载数据集
+               '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/ACCAD',
+               '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/Eyes_Japan_Dataset'] # 去AMASS官网下载数据集
 model_config_file = "TransMultiStepDiff_usehand.json"
 device = torch.device('cuda')
 # 加载数据集
@@ -194,8 +195,8 @@ for epoch in range(num_epoch_pretrain):
 
 print("预训练完成，训练扩散模型")
 # 继续训练
-train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True)
-num_epoch = 10
+# train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True)
+num_epoch = 20
 for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True) # 每个epoch shuffle一下
     print('epoch: ',epoch)
@@ -213,7 +214,7 @@ for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     plt.plot(train_loss_all)
     plt.savefig(os.path.join(save_dir,'loss_{}.pdf'.format(ckpt_name[:-4])))
     plt.close()
-    visual_result(valid_set=valid_set, model=model)
+    visual_result(valid_set=train_set, model=model)
     print('结果可视化完成')
     # 实时推送github，方便手机端远程查看
     with open('./loss.txt','a') as f:
