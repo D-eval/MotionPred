@@ -69,7 +69,7 @@ assert train_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验�
 # 加载模型优化器
 # pretrain后冻结encoder
 params_to_train = model.get_train_params_without_encoder()
-optimizer = torch.optim.Adam(params_to_train, lr=1e-5)
+optimizer = torch.optim.Adam(params_to_train, lr=1e-4)
 # 训练函数
 def train_one_epoch(model, train_loader, optimizer, device='cuda'):
     model.to(device)

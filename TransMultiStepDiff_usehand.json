@@ -33,5 +33,6 @@
     "pred_time_step": 150,
     "use_simple_history_encoder": false,
     "need_output_bias": true,
-    "need_normer": false
+    "need_normer": false,
+    "use_posterior": false
 }

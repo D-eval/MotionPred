@@ -1480,7 +1480,8 @@ class TransformerDiffusionMultiStep(nn.Module):
                  pred_time_step,
                  use_simple_history_encoder,
                  need_output_bias,
-                 need_normer):
+                 need_normer,
+                 use_posterior):
         super().__init__()
         self.encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
                  window_len,
@@ -1518,7 +1519,7 @@ class TransformerDiffusionMultiStep(nn.Module):
                  num_head_spacial_decoder,num_head_temporal_decoder,
                  shared_templ_kv_decoder,
                  temp_abs_pos_encoding_decoder,temp_rel_pos_encoding_decoder,
-                 use_posteriors=True,
+                 use_posteriors=use_posterior,
                  posterior_name=posterior_name,num_heads_posterior=num_heads_posterior_decoder,
                  epsilon=epsilon,tanh_scale=tanh_scale,
                  need_output_bias=need_output_bias)
@@ -1533,7 +1534,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         # 这被证明是一个失败的设计
         
         self.pred_time_step = pred_time_step # 一次性预测(生成)的时间步数
-        self.normer = Normer() if need_normer else NotNormer()# 输入的不必归一化，生成的须归一化
+        self.normer = Normer() if need_normer else NotNormer() # Normer: 输入的不必归一化，生成的须归一化, NotNormer:恒等映射
         
     # 外部调用方法: 
     # forward, 计算loss
@@ -1665,7 +1666,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         var_tau = beta_tau * (1-alpha_bar_tau_minus_one) / (1-alpha_bar_tau)
         sigma_tau = var_tau.sqrt()
         sampled_z = torch.randn_like(poses_tau) if sampled_z is None else sampled_z
-        sampled_z *= 0.1 #*self.noise_scale[None,None,:,:] #
+        sampled_z *= 0.01 #*self.noise_scale[None,None,:,:] #
         poses_tau_minus_one = mu_tau + sigma_tau * sampled_z
         return poses_tau_minus_one
 
