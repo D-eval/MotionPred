@@ -31,7 +31,7 @@
     "Tau": 50,
     "schedule": "cosine",
     "pred_time_step": 150,
-    "use_simple_history_encoder": false,
+    "use_simple_history_encoder": true,
     "need_output_bias": true,
     "need_normer": false,
     "use_posterior": false

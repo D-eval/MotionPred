@@ -1436,29 +1436,45 @@ class DiffusionSchedule(nn.Module):
         else:
             raise NotImplementedError(f"Unsupported schedule: {schedule}")
 
-
+# 只有嵌入和一个spacial attention
 class HistoryEncoder(nn.Module):
-    def __init__(self,d_in,d_out,window_len,joint_num):
+    def __init__(self,d_in,d_out,window_len,joint_num,
+                 num_head_spacial,dropout_rate):
         super().__init__()
         self.window_len = window_len
         self.joint_num = joint_num
         time_encoding = positional_encoding(window_len,d_out) # (1,T,1,D)
         self.register_buffer('time_encoding', torch.Tensor(time_encoding))
-        self.linears = nn.ModuleList([
-            nn.Linear(d_in,d_out)
+        self.convs = nn.ModuleList([
+            nn.Conv1d(d_in,d_out,kernel_size=3,padding=1)
             for _ in range(joint_num)
         ])
+        # self.ln_temporal = nn.LayerNorm(d_out)
+        self.spatial_attn = SepSpacialAttention(d_out,joint_num,num_head_spacial)
+        self.dropout_spatial = nn.Dropout(dropout_rate)
+        # self.ln_spatial = nn.LayerNorm(d_out)
+        self.joint_embedding = nn.Parameter(torch.randn(joint_num,d_out))
     def forward(self,history_poses):
         # history_poses: (B,T,N,d)
         B,T,N,d = history_poses.shape
         assert N==self.joint_num, "关节数目不匹配,模型期待{},得到了输入{}".format(self.joint_num,N)
-        history_poses = history_poses.permute(2,0,1,3) # (N,B,T,d)
+        history_poses = history_poses.permute(2,0,3,1) # (N,B,d,T)
         output = []
+        # 时间卷积嵌入 (d,T) -conv1d,kernel_size=3,padding=1-> (D,T)
         for joint_idx in range(N):
-            output += [self.linears[joint_idx](history_poses[joint_idx])]
-        output = torch.stack(output) # (N,B,T,D)
-        output = output.permute(1,2,0,3) # (B,T,N,D)
-        output += self.time_encoding[:,:T]
+            output += [self.convs[joint_idx](history_poses[joint_idx])] # (B,d,T)
+        output = torch.stack(output) # (N,B,D,T)
+        output = output.permute(1,3,0,2) # (B,T,N,D)
+        # output = self.ln_temporal(output) # (B,T,N,D)
+        output = F.relu(output) # (B,T,N,D)
+        # 空间编码
+        output += self.joint_embedding[None,None,:,:] # (B,T,N,D)
+        # 空间 attention 聚合
+        attn_spa, attn_weights_block = self.spatial_attn(output)
+        attn_spa = self.dropout_spatial(attn_spa)
+        # attn_spa = self.ln_spatial(attn_spa + output)
+        # 时间编码
+        output += self.time_encoding[:,:T] # (B,T,N,D)
         return output, None # 为了匹配另一个encoder的输出格式
 
 
@@ -1670,7 +1686,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         var_tau = beta_tau * (1-alpha_bar_tau_minus_one) / (1-alpha_bar_tau)
         sigma_tau = var_tau.sqrt()
         sampled_z = torch.randn((B, 1, N, d),device=mu_tau.device) if sampled_z is None else sampled_z
-        sampled_z *= 0.1 #*self.noise_scale[None,None,:,:] #
+        sampled_z *= 1 #*self.noise_scale[None,None,:,:] #
         poses_tau_minus_one = mu_tau + sigma_tau * sampled_z
         return poses_tau_minus_one
 

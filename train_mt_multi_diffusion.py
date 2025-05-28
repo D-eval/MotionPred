@@ -40,7 +40,7 @@ import time
 
 
 save_dir = '/home/vipuser/DL/Dataset50G/save'
-ckpt_name = 'ckpt_multi_diffusion.pth'
+ckpt_name = 'ckpt_multi_diffusion_simple_encoder.pth' #'ckpt_multi_diffusion.pth'
 dataset_dir = ['/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT',
                '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/CMU',
                '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/BMLmovi',
@@ -69,7 +69,7 @@ assert train_set[0][0].shape[0] > 2 * model.encoder.pool.query.shape[0],"后验�
 
 # 加载模型优化器
 # pretrain后冻结encoder
-params_to_train = model.get_train_params_without_encoder()
+params_to_train = model.get_train_params() #.get_train_params_without_encoder()
 optimizer = torch.optim.Adam(params_to_train, lr=1e-4)
 # 训练函数
 def train_one_epoch(model, train_loader, optimizer, device='cuda'):
