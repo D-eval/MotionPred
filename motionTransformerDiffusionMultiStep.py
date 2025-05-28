@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import math
 import numpy as np
 
-
+import torch.fft
 
 import sys
 
@@ -214,16 +214,70 @@ class Layernorm(nn.Module):
         return out
 
 
+
+
+class SlidingFourierEncoder(nn.Module):
+    def __init__(self, window_len, stride=1, padding=0, mode='real_imag'):
+        """
+        使用滑动窗口的傅里叶变换器
+        Args:
+            window_len: 每个滑动窗口的长度
+            stride: 滑动步长
+            padding: 输入序列的 padding
+            mode: 傅里叶特征模式 ['real_imag' | 'magnitude' | 'complex']
+        """
+        super().__init__()
+        self.window_len = window_len
+        self.stride = stride
+        self.padding = padding
+        self.freq_dim = window_len // 2 + 1
+        assert mode in ['real_imag', 'magnitude', 'complex'], f"Unsupported mode: {mode}"
+        self.mode = mode
+
+    def forward(self, x):
+        """
+        Args:
+            x: (..., 1, T)
+        Returns:
+            (..., D, T1), D depends on mode
+        """
+        orig_shape = x.shape[:-2]
+        T = x.shape[-1]
+
+        # padding
+        x = F.pad(x, (self.padding, self.padding), mode='reflect')  # (..., 1, T_pad)
+
+        # unfold: (..., 1, T_pad) -> (..., 1, T1, window_len)
+        x_unfold = x.unfold(-1, self.window_len, self.stride)  # (..., 1, T1, window_len)
+        x_unfold = x_unfold.squeeze(-4)  # (..., T1, window_len)
+
+        # 进行 rfft
+        x_fft = torch.fft.rfft(x_unfold, dim=-1)  # (..., T1, D)
+
+        if self.mode == 'complex':
+            x_out = x_fft.transpose(-2, -1)  # (..., D, T1), complex
+        elif self.mode == 'real_imag':
+            real = x_fft.real.transpose(-2, -1)  # (..., D, T1)
+            imag = x_fft.imag.transpose(-2, -1)  # (..., D, T1)
+            x_out = torch.cat([real, imag], dim=-2)  # (..., 2D, T1)
+        elif self.mode == 'magnitude':
+            mag = torch.abs(x_fft.transpose(-2, -1))  # (..., D, T1)
+            x_out = mag
+        return x_out
+
+# 门控 top-C
+
 class AttentionPool(nn.Module):
-    def __init__(self,cls_num,d_model):
+    def __init__(self,cls_num,d_model,joint_num):
         super().__init__()
         self.cls_num = cls_num
-        self.query = nn.Parameter(torch.randn(cls_num, d_model))  # (cls_num, D)
+        self.joint_num = joint_num
+        self.querys = nn.Parameter(torch.randn(joint_num, cls_num, d_model))  # (N, C, D)
         self.scale = d_model ** 0.5
     def forward(self,x):
-        # x: (B,T,D)
-        # return: (B,cls_num,D)
-        B, T, D = x.shape
+        # x: (B,T,N,D)
+        # return: (B,C,N,D)
+        B, T, N, D = x.shape
         q = self.query.unsqueeze(0).expand(B, -1, -1)  # (B, cls_num, D)
         k = x  # (B, T, D)
         v = x
@@ -715,96 +769,56 @@ class CrossAttentionN(nn.Module):
 
 
 class PosteriorRotationN(nn.Module):
-    def __init__(self,num_joints,num_heads,d_model,
+    def __init__(self,num_joints,D_decoder,D_encoder,
                  epsilon, tanh_scale):
         super().__init__()
-        d_model = d_model
-        num_heads = num_heads
         num_joints = num_joints
         epsilon = epsilon
         tanh_scale = tanh_scale
-        if d_model % num_heads != 0:
-            raise ValueError('d_model必须被num_heads整除')
-        depth = d_model // num_heads
         
-        self.num_heads = num_heads
-        self.depth = depth
-        self.d_model = d_model
         self.num_joints = num_joints
         self.epsilon = epsilon
         self.tanh_scale = tanh_scale
         
         self.linear_qs = nn.ModuleList([
-            nn.Linear(d_model, d_model)
+            nn.Linear(D_encoder, D_decoder)
             for _ in range(num_joints)
         ])
         
-        self.tril_indices = torch.tril_indices(depth, depth, offset=-1)
-        self.param_dim = (depth * (depth - 1)) // 2
+        self.tril_indices = torch.tril_indices(D_decoder, D_decoder, offset=-1)
+        self.param_dim = (D_decoder * (D_decoder - 1)) // 2
         
-        self.kv_context = nn.Linear(d_model, d_model) # (B, d*(d-1)/2, D)
+        self.kv_context = nn.Linear(D_encoder, D_decoder) # (B, d*(d-1)/2, D)
         
         # layernorm
-        self.layernorm = nn.LayerNorm(depth) # Layernorm(depth)
+        # self.layernorm = nn.LayerNorm(depth) # Layernorm(depth)
     def forward(self,x,context=None):
-        # x: (B, T, N, D)
-        # context: (B, C, D) where C = d*(d-1)/2
-        # return: (B, T, N, D)
-        if context is None:
-            return x
-        B, T, N, D = x.shape
-        x = x.permute(2,0,1,3) # (N, B, T, D)
-        assert N == self.num_joints
-        
-        d = self.depth
-        C = self.param_dim
-        assert C == d*(d-1)//2
-        
-        H = self.num_heads
-        assert d*H == D
-        
+        # x: (B, T, N, D2) 隐层
+        # context: (B, C, N, D1) where C = D2*(D2-1)/2
+        # return: (B, T, N, D2)
+        B,T,N,D2 = x.shape
+        C = context.shape[1]
         # 先linear，再split_head
-        kv = self.kv_context(context) # (B, C, D)
-        kv = self.split_head(kv) # (B, H, C, d)
-        kv = self.layernorm(kv) # (B, H, C, d)
+        kv = self.kv_context(context) # (B, C, N, D2)
         
-        outs = []
-        for joint_idx in range(N):
-            joint_rep = x[joint_idx] # (B, T, D)
-            q = self.linear_qs[joint_idx](joint_rep) # (B, T, D)
-            q = self.split_head(q) # (B, H, T, d)
-            skew_params = torch.matmul(q, kv.transpose(-1,-2)) # (B, H, T, d*(d-1)/2)
-            skew_params = self.tanh_scale * torch.tanh(skew_params / self.tanh_scale)
-            # 构造反对称矩阵 (B, H, T, d, d)
-            A = torch.zeros(B, H, T, d, d, device=q.device)
-            A[:, :, :, self.tril_indices[0], self.tril_indices[1]] = skew_params
-            A = A - A.transpose(-1, -2)  # 反对称
-            # 构造微旋转矩阵 (B, H, T, d, d)
-            R = torch.eye(d, device=q.device).reshape(1, 1, 1, d, d).expand(B, H, T, d, d)
-            R = R + self.epsilon * A
-            joint_rep = self.split_head(joint_rep) # (B, H, T, d)
-            joint_rep = joint_rep.unsqueeze(-2) # (B, H, T, 1, d)
-            # (B, H, T, 1, d) @ (B, H, T, d, d)
-            joint_rep = torch.matmul(joint_rep, R.transpose(-1, -2)) # (B, H, T, 1, d)
-            joint_rep = joint_rep[...,0,:] # (B, H, T, d)
-            joint_rep = self.merge_head(joint_rep) # (B, T, D)
-            outs += [joint_rep.unsqueeze(2)]
-        return torch.cat(outs,dim=2) # (B,T,N,D)
-    def split_head(self,x):
-        # x: (B,T,D)
-        # return: (B,H,T,d)
-        B, T, D = x.shape
-        H = self.num_heads
-        depth = self.depth
-        y = torch.reshape(x, (B, T, H, depth))
-        y = y.permute(0, 2, 1, 3)
+        kv = kv.permute(0,2,3,1) # (B,N,D,C)
+        x = x.permute(0,2,1,3) # (B,N,T,D)
+        
+        # (B,N,T,D) @ (B,N,D,C) -> (B,N,T,C)
+        skew_params = x @ kv # (B,N,T,C)
+        skew_params = self.epsilon * self.tanh_scale * torch.tanh(skew_params / self.tanh_scale)
+
+        A = torch.zeros((B,N,T,D2,D2), device=x.device)
+        A[..., self.tril_indices[0], self.tril_indices[1]] = skew_params
+        A = A - A.transpose(-1,-2)
+        
+        dx = x[:,:,:,None,:] @ A # (B,N,T,1,D)
+
+        y = x + dx
+        y = y[:,:,:,0,:] # (B,N,T,D)
+        y = y.permute(0,2,1,3) # (B,T,N,D2)
+        
         return y
-    def merge_head(self, x):
-        # x: (B, H, T, d) => (B, T, H * d) = (B, T, D)
-        B, H, T, d = x.shape
-        x = x.permute(0, 2, 1, 3).contiguous()  # (B, T, H, d)
-        x = x.view(B, T, H * d)           # (B, T, D)
-        return x
 
 
 def get_model_cls(model_name):
@@ -933,18 +947,18 @@ class ParaTransformerDecoderLayer(nn.Module):
             if posterior_name=='CrossAttentionN':
                 self.posterior_correction = CrossAttentionN(num_joints, num_heads_posterior, d_model)
             elif posterior_name=='PosteriorRotationN':
-                self.posterior_correction = PosteriorRotationN(num_joints, num_heads_posterior, d_model,
+                self.posterior_correction = PosteriorRotationN(num_joints, d_model, d_model,
                                                                epsilon, tanh_scale)
             else:
                 raise ValueError('unknown model')
-            self.dropout_posterior = nn.Dropout(self.dropout_rate)
-            self.ln_posterior = nn.LayerNorm(self.d_model)
+            # self.dropout_posterior = nn.Dropout(self.dropout_rate)
+            # self.ln_posterior = nn.LayerNorm(self.d_model)
         self.use_posteriors = use_posteriors
 
     def forward(self, eps_v, history_pose, mask, context, use_self_layernorm=True):
         # eps_v: (B, T_q, N, D) # T_q间进行self_attn
         # history_pose: (B, T, N, D)
-        # context: (B, C, D)
+        # context: (B, C, N, D)
         # mask : (T_q, T)
         # return: (B, T_q, N, D)
         T_q = eps_v.shape[1]
@@ -979,8 +993,8 @@ class ParaTransformerDecoderLayer(nn.Module):
         # 后验修正
         if self.use_posteriors:
             out_posterior = self.posterior_correction(out, context=context)
-            out_posterior = self.dropout_posterior(out_posterior)
-            out = self.ln_posterior(out_posterior + out)
+            # out_posterior = self.dropout_posterior(out_posterior)
+            # out = self.ln_posterior(out_posterior + out)
 
         # feed forward
         ffn_output = self.feed_forward(out)
@@ -1090,7 +1104,7 @@ class TransformerDecoder(nn.Module):
         
 
         if self.abs_pos_encoding: # 必须填True
-            eps_pose += self.pos_encoding[:, :T_q]
+            eps_pose += self.pos_encoding[:, T:T+T_q]
             # history_embed += self.pos_encoding[:,:T] # 已经在 history_encoder 中加入过了
             
         gate = torch.sigmoid(self.tau_gate_proj(tau_emb)) # (B, D)
@@ -1454,7 +1468,7 @@ class HistoryEncoder(nn.Module):
         self.dropout_spatial = nn.Dropout(dropout_rate)
         # self.ln_spatial = nn.LayerNorm(d_out)
         self.joint_embedding = nn.Parameter(torch.randn(joint_num,d_out))
-    def forward(self,history_poses):
+    def forward(self,history_poses,start_t=0):
         # history_poses: (B,T,N,d)
         B,T,N,d = history_poses.shape
         assert N==self.joint_num, "关节数目不匹配,模型期待{},得到了输入{}".format(self.joint_num,N)
@@ -1474,8 +1488,59 @@ class HistoryEncoder(nn.Module):
         attn_spa = self.dropout_spatial(attn_spa)
         # attn_spa = self.ln_spatial(attn_spa + output)
         # 时间编码
-        output += self.time_encoding[:,:T] # (B,T,N,D)
+        output += self.time_encoding[:,start_t:start_t+T] # (B,T,N,D)
         return output, None # 为了匹配另一个encoder的输出格式
+    def encode(self,history_poses):
+        output, _ = self(history_poses)
+        return output
+
+
+class FlexConv1d(nn.Module):
+    def __init__(self,in_channels,out_channels,kernel_size,padding=0,stride=1):
+        super().__init__()
+        self.conv = nn.Conv1d(in_channels,out_channels,kernel_size,stride=stride,padding=padding)
+    def forward(self, x):
+        # x: (..., in_channels, T)
+        # return (..., out_channels, T_out)
+        *leading_dims, in_channels, T = x.shape
+        x = x.reshape(-1, in_channels, T)  # (B*, in_channels, T)
+        x = self.conv(x)                   # (B*, out_channels, T_out)
+        out_channels = x.shape[1]
+        T_out = x.shape[2]
+        x = x.view(*leading_dims, out_channels, T_out)  # (..., out_channels, T_out)
+        return x
+
+
+class EncodeCompressor(nn.Module):
+    def __init__(self,D_decoder,joint_num,
+                 d_in,window_len,num_head_spacial,dropout_rate):
+        super().__init__()
+        self.encoder = HistoryEncoder(d_in,D_decoder,window_len,joint_num,
+                                      num_head_spacial,dropout_rate) # history_poses
+        C = D_decoder * (D_decoder-1) / 2
+        # self.pool = AttentionPool(cls_num=C, d_model=D_decoder, joint_num=joint_num)
+        self.conv = FlexConv1d(1,C,kernel_size=15, stride=15) # 0.5 秒 30 fps
+        self.post_linear = nn.ModuleList([
+            nn.Linear(C,C)
+            for _ in range(joint_num)
+        ])
+    def forward(self,history_poses):
+        # (B,T,N,d)
+        B,T,N,d = history_poses.shape
+        context = self.encoder.encode(history_poses) # (B,T,N,D)
+        # (B,T,N,D)
+        context = context.permute(2,0,3,1) # (N,B,D,T)
+        output = []
+        for n in range(N):
+            context_n = context[n] # (B,D,T)
+            # 先用卷积找d个极大的idx
+            context_n = context_n[:,:,None,:] # (B,D,1,T)
+            context_n = self.conv(context_n) # (B,D,C,T)
+            context_n, _ =torch.max(context_n, dim=-1) # (B,D,C)
+            context_n = self.post_linear[n](context_n) # (B,D,C)
+            output.append(context_n)
+        output = torch.stack(output,dim=1) # (B,N,D,C)
+        return output
 
 
 class TransformerDiffusionMultiStep(nn.Module):
@@ -1500,23 +1565,28 @@ class TransformerDiffusionMultiStep(nn.Module):
                  use_simple_history_encoder,
                  need_output_bias,
                  need_normer,
-                 use_posterior):
+                 use_posterior,
+                 use_simple_posterior_encoder):
         super().__init__()
-        self.encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
-                 window_len,
-                 abs_pos_encoding_encoder,num_layers_encoder,
-                 dropout_rate_encoder,
-                 num_head_spacial_encoder, num_head_temporal_encoder,
-                 shared_templ_kv_encoder,
-                 temp_abs_pos_encoding_encoder,temp_rel_pos_encoding_encoder,
-                 use_posteriors=False,
-                 posterior_name=None,num_heads_posterior=None,
-                 epsilon=None, tanh_scale=None,
-                 dim_for_decoder=d_model_decoder,num_heads_decoder=num_heads_posterior_decoder,
-                 pretrain_loss_type=pretrain_loss_type,
-                 use_attention_pool=True)
+        if use_simple_posterior_encoder:
+            pass
+        else:
+            self.encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
+                    window_len,
+                    abs_pos_encoding_encoder,num_layers_encoder,
+                    dropout_rate_encoder,
+                    num_head_spacial_encoder, num_head_temporal_encoder,
+                    shared_templ_kv_encoder,
+                    temp_abs_pos_encoding_encoder,temp_rel_pos_encoding_encoder,
+                    use_posteriors=False,
+                    posterior_name=None,num_heads_posterior=None,
+                    epsilon=None, tanh_scale=None,
+                    dim_for_decoder=d_model_decoder,num_heads_decoder=num_heads_posterior_decoder,
+                    pretrain_loss_type=pretrain_loss_type,
+                    use_attention_pool=True)
         if use_simple_history_encoder: # 是否使用简单的历史编码器
-            self.history_encoder = HistoryEncoder(joint_size, d_model_decoder, window_len, num_joints)
+            self.history_encoder = HistoryEncoder(joint_size, d_model_decoder, window_len, num_joints,
+                                                  num_head_spacial_encoder, dropout_rate_decoder)
         else:
             self.history_encoder = FixShapeEncoder(num_joints,d_model_encoder,joint_size,
                      window_len,
@@ -1555,9 +1625,9 @@ class TransformerDiffusionMultiStep(nn.Module):
         self.pred_time_step = pred_time_step # 一次性预测(生成)的时间步数
         self.normer = Normer() if need_normer else NotNormer() # Normer: 输入的不必归一化，生成的须归一化, NotNormer:恒等映射
         
-    # 外部调用方法: 
-    # forward, 计算loss
-    # sample, 用于生成
+        # 外部调用方法: 
+        # forward, 计算loss
+        # sample, 用于生成
         
     def encode(self, inputs):
         # inputs: (B, T, N, d_in)
