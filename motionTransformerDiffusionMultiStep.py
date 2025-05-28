@@ -955,24 +955,27 @@ class ParaTransformerDecoderLayer(nn.Module):
         temporal_out = self.ln_temporal(attn1 + eps_v)
         
         # spatial
-        attn2, attn_weights_block2 = self.spatial_attn(temporal_out)
+        attn2, attn_weights_block2 = self.spatial_attn(eps_v)
         attn2 = self.dropout_spatial(attn2)
         if use_self_layernorm:
-            spatial_out = self.ln_spatial(attn2 + temporal_out)
+            spatial_out = self.ln_spatial(eps_v + attn2)
         else:
-            spatial_out = attn2 + temporal_out
+            spatial_out = eps_v + attn2
         
-        out = spatial_out
+        # out = spatial_out
         
         # self attn
-        mask_self_attn = torch.zeros((T_q,T_q)).to(eps_v.device)
-        attn3, attn_weights_block3 = self.temporal_self_attn(out, mask_self_attn, "look_ahead") # 并非look_ahead，只是这样写而已。
-        attn3 = self.dropout_merge(attn3)
-        if use_self_layernorm:
-            out = self.ln_merge(attn3 + out)
-        else:
-            out = attn3 + out
-        
+        # 既然要在像素上连续，就不要有attention，直接用卷积就行
+        # mask_self_attn = torch.zeros((T_q,T_q)).to(eps_v.device)
+        # attn3, attn_weights_block3 = self.temporal_self_attn(eps_v, mask_self_attn, "look_ahead") # 并非look_ahead，只是这样写而已。
+        # attn3 = self.dropout_merge(attn3)
+        # if use_self_layernorm:
+        #     self_out = self.ln_merge(attn3 + eps_v)
+        # else:
+        #     self_out = attn3 + eps_v
+        # 
+        out = temporal_out # + spatial_out # + self_out
+
         # 后验修正
         if self.use_posteriors:
             out_posterior = self.posterior_correction(out, context=context)
@@ -1659,14 +1662,15 @@ class TransformerDiffusionMultiStep(nn.Module):
         
         epsilon_scaled_theta = self.decode(poses_tau, prior_context, tau_embed, context, mask)
         # (B, T_q, N, d_in)
+        _, T_q, _, d = poses_tau.shape
         mu_tau = 1/alpha_tau.sqrt() * (poses_tau - beta_tau/(1-alpha_bar_tau).sqrt() * epsilon_scaled_theta)
         if tau == 1:
             return mu_tau
         alpha_bar_tau_minus_one = self.diffusion_schedule.alpha_bars[tau-1]
         var_tau = beta_tau * (1-alpha_bar_tau_minus_one) / (1-alpha_bar_tau)
         sigma_tau = var_tau.sqrt()
-        sampled_z = torch.randn_like(poses_tau) if sampled_z is None else sampled_z
-        sampled_z *= 0.01 #*self.noise_scale[None,None,:,:] #
+        sampled_z = torch.randn((B, 1, N, D)) if sampled_z is None else sampled_z
+        sampled_z *= 0.1 #*self.noise_scale[None,None,:,:] #
         poses_tau_minus_one = mu_tau + sigma_tau * sampled_z
         return poses_tau_minus_one
 

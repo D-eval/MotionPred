@@ -68,7 +68,9 @@ def get_multi_time_pred_loss(idx, pred_step=150, need_bvh=True):
 
 # model.to(device)
 # 整个句子10 s 预测 5 s
-def visual_result(model, valid_set, idx=0):
+def visual_result(model, valid_set, idx=0, disp_dir=None):
+    save_dir = save_dir if disp_dir is None else disp_dir
+    idx = np.random.randint(0,len(valid_set)) if idx is None else idx # 随机可视化一个
     pred_step=150
     rot_mat = valid_set[idx][0].to(device) # (T, N, 6)
     text = valid_set[idx][1]
@@ -89,8 +91,8 @@ def visual_result(model, valid_set, idx=0):
     rot_mat_flatten = torch.flatten(rot_mat,0,2) # (?,6)
     rot_mat_flatten = compute_rotation_matrix_from_ortho6d(rot_mat_flatten)
     rot_mat_flatten = torch.reshape(rot_mat_flatten, (T,N,9))
-    valid_set.processor.write_bvh(output_rot_mat,filename='Ani_multiStep_diffusion_frame_{}_motion_{}.bvh'.format(pred_step,text[:-4]))
-    valid_set.processor.write_bvh(rot_mat_flatten,filename='Ani_multiStep_diffusion_frame_{}_motion_{}_ground_truth.bvh'.format(pred_step,text[:-4]))
+    valid_set.processor.write_bvh(output_rot_mat, filename='Ani_{}_{}.bvh'.format(pred_step,text[:-4]), save_dir=save_dir)
+    valid_set.processor.write_bvh(rot_mat_flatten, filename='Ani_{}_{}_ground_truth.bvh'.format(pred_step,text[:-4]), save_dir=save_dir)
     print('成功保存bvh文件')
     fps = valid_set.target_fps
     interval = 1/fps
@@ -123,6 +125,8 @@ def visual_result(model, valid_set, idx=0):
     
     print('保存多步预测曲线至 {}'.format(save_path_motion))
     print('也保存到了 ./curve.png')
+    
+    return idx
 
 
 save_dir = '/home/vipuser/DL/Dataset50G/save'

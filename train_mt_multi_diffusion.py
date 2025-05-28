@@ -193,6 +193,7 @@ for epoch in range(num_epoch_pretrain):
     push_loss_curve_to_github(['pretrain_loss.txt'])
 '''
 
+
 print("预训练完成，训练扩散模型")
 # 继续训练
 # train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True)
@@ -214,7 +215,7 @@ for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     plt.plot(train_loss_all)
     plt.savefig(os.path.join(save_dir,'loss_{}.pdf'.format(ckpt_name[:-4])))
     plt.close()
-    visual_result(valid_set=train_set, model=model)
+    visual_idx = visual_result(valid_set=train_set, model=model, idx=None)
     print('结果可视化完成')
     # 实时推送github，方便手机端远程查看
     with open('./loss.txt','a') as f:
@@ -222,6 +223,12 @@ for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     push_loss_curve_to_github(['curve.png','loss.txt','README.md'])
 
 
+'''
+progress_bar = tqdm(range(20))
+model.to(device)
+for i in progress_bar:
+    visual_idx = visual_result(valid_set=train_set, model=model, idx=None, disp_dir='./output')
+'''
 
 '''
 for batch in train_loader:

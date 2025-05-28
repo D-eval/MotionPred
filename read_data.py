@@ -82,8 +82,8 @@ class Processor:
         rot_mats = torch.Tensor(rot_mats).to(self.device)
         return rot_mats
     
-    def write_bvh(self,rot_mats,root_motion=None,bdata=None,filename='real.bvh'):
-        save_dir = "/home/vipuser/DL/Dataset50G/save"
+    def write_bvh(self,rot_mats,root_motion=None,bdata=None,filename='real.bvh',save_dir=None):
+        save_dir = "/home/vipuser/DL/Dataset50G/save" if save_dir is None else save_dir
         # bdata: smplx .npz data
         # rot_mats: (t,52,9) or (t,21,9)
         # filename: path/to/yourfile.bvh
