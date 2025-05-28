@@ -1669,7 +1669,7 @@ class TransformerDiffusionMultiStep(nn.Module):
         alpha_bar_tau_minus_one = self.diffusion_schedule.alpha_bars[tau-1]
         var_tau = beta_tau * (1-alpha_bar_tau_minus_one) / (1-alpha_bar_tau)
         sigma_tau = var_tau.sqrt()
-        sampled_z = torch.randn((B, 1, N, D),device=mu_tau.device) if sampled_z is None else sampled_z
+        sampled_z = torch.randn((B, 1, N, d),device=mu_tau.device) if sampled_z is None else sampled_z
         sampled_z *= 0.1 #*self.noise_scale[None,None,:,:] #
         poses_tau_minus_one = mu_tau + sigma_tau * sampled_z
         return poses_tau_minus_one
