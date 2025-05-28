@@ -49,7 +49,13 @@ python3 train_mt_multi_diffusion.py
 
 具体介绍每个模块
 
-### PosteriorEncoder
+### TCSA-Encoder
+
+为了达到保留动态、融合全局的目的，我们设计了一种 Temporal Conv Spatial Attention Encoder (TCSA-Encoder)，用于
+
+我们设计的编码器再时间上用一维卷积捕捉动态时序信息，空间上用 Spatial Attention 捕捉骨骼姿态之间的相关信息，允许关节再尽可能保留原始姿态的情况下融合了局部的动态和全局的姿态。
+
+### Posterior-Rotation
 
 #### 介绍
 
@@ -59,10 +65,12 @@ $$ C = \frac{1}{2}D(D-1) $$
 
 由于任意旋转矩阵都可以表示为一个斜对称矩阵$A$的指数矩阵，我们取一个微小旋转矩阵$A$，其指数矩阵可以近似为$R = I+A$。
 
-后验旋转模块从形状为 $(B,T,N,D)$ 的decoder隐层输出中，接收某个时刻某个关节的表示 $z$，其形状为 $(D)$，送入CrossAttention作为query，并将PosteriorEncoder得到的形状为$(C,D)$的后验表示作为key，该模块不需要value，或者将1作为value。用query和key求的$C$个相似度作为参数构造斜对称矩阵$A$。随后将$R=A+I$作用在$z$上得到经过后验修正的$z$。
+后验旋转模块从形状为 $(B,T,N,D)$ 的decoder隐层输出中，接收某个时刻某个关节的表示 $z$ ，其形状为 $(D)$，送入CrossAttention作为query，并将PosteriorEncoder得到的形状为 $(C,D)$ 的后验表示作为key，该模块不需要value，或者将1作为value。用query和key求的 $C$ 个相似度作为参数构造斜对称矩阵$A$。随后将 $R=A+I$ 作用在 $z$ 上得到经过后验修正的 $z$ 。
 
 #### 实现
 
-实现的关键在于如何把任意时间长度的数据压缩到$C$。同样需要保留动态信息，我们采用相同的编码器将姿态序列输入$(B,T,N,d)$映射为$(B,T,N,D)$。然后再通过一些其他的方式压缩得到$(B,C,N,D)$
+实现的关键在于如何把任意时间长度的数据压缩到 $C$ 。同样需要保留动态信息，我们采用相同的编码器将姿态序列输入 $(B,T,N,d)$ 映射为 $(B,T,N,D)$ 。然后再通过一些其他的方式压缩得到 $(B,C,N,D)$
 
-压缩的关键在于寻找$C$个未来的关键帧。
+压缩的关键在于寻找 $C$ 个未来的关键帧作为指引。我们采取了一种token化的方法：定义 $C\times N$ 个可学的 $D$ 维向量作为 query，与形状为 $(B,T,N,D)$ 姿态序列编码进行 CrossAttention 得到了压缩后的 $(B,C,N,D)$。
+
+由于 
