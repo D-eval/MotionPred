@@ -4,10 +4,6 @@
 
 * `post_mt_diffusion`: 后验Transformer diffusion, 编码了未来信息的 _context_ 和历史姿态同时作为输入。
 
-* `prior_mt_diffusion`: 先验Transformer diffusion, 仅用历史姿态作为输入。
-
-* `psyPred`: 用过去姿态得到未来 _context_ 的分布，从而预测未来的姿态。
-
 ## 数据集
 
 从AMASS下载数据集。
@@ -77,4 +73,4 @@ $$ C = \frac{1}{2}D(D-1) $$
 
 ### Multi-Step-Decoder
 
-解码器的动作生成是一次性完成的，解码器接受一个形状为 $(B,T_q,N,d)$ 的长序列的噪声，噪声时间 $\tau$ 作为条件，以及形状为 $(B,T,N,d)$ 的历史姿态编码。
+解码器的动作生成是一次性完成的，解码器接受一个形状为 $(B,T_q,N,d)$ 的长序列的噪声，噪声时间 $\tau$ 作为条件，以及形状为 $(B,T,N,D)$ 的历史姿态编码。随后经过CrossAttention层融合历史姿态信息，再经过Posterior-Rotation模块融合后验信息。
