@@ -69,7 +69,7 @@ def get_multi_time_pred_loss(idx, pred_step=150, need_bvh=True):
 # model.to(device)
 # 整个句子10 s 预测 5 s
 def visual_result(model, valid_set, idx=0, disp_dir=None):
-    save_dir = save_dir if disp_dir is None else disp_dir
+    save_dir = '/home/vipuser/DL/Dataset50G/save' if disp_dir is None else disp_dir
     idx = np.random.randint(0,len(valid_set)) if idx is None else idx # 随机可视化一个
     pred_step=150
     rot_mat = valid_set[idx][0].to(device) # (T, N, 6)
