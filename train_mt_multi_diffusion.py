@@ -220,7 +220,7 @@ for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     # 实时推送github，方便手机端远程查看
     with open('./loss.txt','a') as f:
         f.write('epoch:{} loss: {}\n'.format(epoch,train_loss))
-    push_loss_curve_to_github(['curve.png','loss.txt','README.md'])
+    push_loss_curve_to_github(['curve.png','curve_real.png','loss.txt','README.md'])
 
 
 '''
