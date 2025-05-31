@@ -74,3 +74,4 @@ $$ C = \frac{1}{2}D(D-1) $$
 ### Multi-Step-Decoder
 
 解码器的动作生成是一次性完成的，解码器接受一个形状为 $(B,T_q,N,d)$ 的长序列的噪声，噪声时间 $\tau$ 作为条件，以及形状为 $(B,T,N,D)$ 的历史姿态编码。随后经过CrossAttention层融合历史姿态信息，再经过Posterior-Rotation模块融合后验信息。
+
