@@ -129,10 +129,59 @@ def visual_result(model, valid_set, idx=0, disp_dir=None):
     return idx
 
 
+def visual_HifiDiff_result(model, valid_set, name, idx=0, disp_dir=None):
+    save_dir = '/home/vipuser/DL/Dataset50G/save' if disp_dir is None else disp_dir
+    idx = np.random.randint(0,len(valid_set)) if idx is None else idx # 随机可视化一个
+    pred_step=150
+    rot_mat = valid_set[idx][0].to(device) # (T, N, 6)
+    text = valid_set[idx][1]
+    T = rot_mat.shape[0]
+    T_history = T - pred_step
+    rot_mat = rot_mat.unsqueeze(0) # (1, T, N, 6)
+    model.eval()
+    with torch.no_grad():
+        context = model.encode(rot_mat) # # (1, T, D)
+
+        rot_mat_recons = model.decode(context) # (1,T,N,6)
+    _, _, N, _ = rot_mat_recons.shape #
+    output_rot_mat = torch.flatten(rot_mat_recons,0,2) # (?,6)
+    output_rot_mat = compute_rotation_matrix_from_ortho6d(output_rot_mat)
+    output_rot_mat = torch.reshape(output_rot_mat, (T,N,9))
+    # 原始数据
+    rot_mat_flatten = torch.flatten(rot_mat,0,2) # (?,6)
+    rot_mat_flatten = compute_rotation_matrix_from_ortho6d(rot_mat_flatten)
+    rot_mat_flatten = torch.reshape(rot_mat_flatten, (T,N,9))
+    valid_set.processor.write_bvh(output_rot_mat, filename='Ani_{}_{}.bvh'.format(pred_step,text[:-4]), save_dir=save_dir)
+    valid_set.processor.write_bvh(rot_mat_flatten, filename='Ani_{}_{}_ground_truth.bvh'.format(pred_step,text[:-4]), save_dir=save_dir)
+    print('成功保存bvh文件')
+    fps = valid_set.target_fps
+    interval = 1/fps
+    # 
+    all_times = np.arange(0,output_rot_mat.shape[0]) * interval
+    for idx in range(0,output_rot_mat.shape[1],3):
+        plt.plot(all_times[:], output_rot_mat[:,idx,0].cpu(), label='joint {}'.format(idx))
+    plt.xlabel('time (seconds)')
+    plt.ylabel('angle')
+    save_path_motion = os.path.join(save_dir, "Curve_name{}_pred{}_text{}.pdf".format(name, pred_step, text[:-4]))
+    plt.savefig(save_path_motion)
+    plt.savefig('./curve.png')
+    plt.close()
+    #
+    for idx in range(0,rot_mat_flatten.shape[1],3):
+        plt.plot(all_times[:], rot_mat_flatten[:,idx,0].cpu(), label='joint {}'.format(idx))
+    plt.xlabel('time (seconds)')
+    plt.ylabel('angle')
+    plt.savefig('./curve_real.png')
+    plt.close()
+    print('保存多步预测曲线至 {}'.format(save_path_motion))
+    print('也保存到了 ./curve.png')
+    return idx
+
+
 save_dir = '/home/vipuser/DL/Dataset50G/save'
-ckpt_name = 'ckpt_multi_diffusion.pth'
-dataset_dir = '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT'
-model_config_file = "TransMultiStepDiff_usehand.json"
+# ckpt_name = 'ckpt_multi_diffusion.pth'
+# dataset_dir = '/home/vipuser/DL/Dataset100G/AMASS/SMPL_H_G/KIT'
+# model_config_file = "TransMultiStepDiff_usehand.json"
 device = torch.device('cuda')
 
 

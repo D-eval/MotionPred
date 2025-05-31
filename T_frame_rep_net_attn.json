@@ -1,0 +1,11 @@
+{
+    "d_in":6,
+    "d_out":32,
+    "joint_num":52,
+    "num_spatial_heads":4,
+    "num_encoder_layers":3,
+    "num_steps":1000,
+    "beta_1":1e-4,
+    "beta_T":0.02,
+    "sched_mode":"linear"
+}
