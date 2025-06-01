@@ -1,6 +1,7 @@
 # 监视gpu使用
 # watch -n 1 nvidia-smi
-# train motionTransformer
+# 一个类似于HiFi-GAN的东西，为了得到一个帧表示
+
 
 import torch
 from torch import nn
@@ -150,7 +151,7 @@ print('输入序列长度:{}'.format(train_set[0][0].shape[0]))
 # 加载模型优化器
 # pretrain后冻结encoder
 params_to_train = list(model.parameters()) #.get_train_params_without_encoder()
-optimizer = torch.optim.Adam(params_to_train, lr=1e-4)
+optimizer = torch.optim.Adam(params_to_train, lr=1e-2)
 
 
 # 报告模型大小
@@ -165,7 +166,7 @@ valid_loss_all = save_dict['valid_loss']
 print("训练空间扩散模型")
 num_epoch = 20
 for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
-    train_loader = DataLoader(train_set, batch_size=12, collate_fn=collate_fn_min_seq, shuffle=True) # 每个epoch shuffle一下
+    train_loader = DataLoader(train_set, batch_size=48, collate_fn=collate_fn_min_seq, shuffle=True) # 每个epoch shuffle一下
     print('epoch: ',epoch)
     start_time = time.time()
     train_loss = train_one_epoch(model, train_loader, optimizer)
@@ -184,6 +185,30 @@ for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
     visual_idx = visual_HifiDiff_result(valid_set=train_set, model=model, name=ckpt_name[:-4], idx=None)
     print('结果可视化完成')
     # 实时推送github，方便手机端远程查看
+    with open('./loss.txt','a') as f:
+        f.write('epoch:{} loss: {}\n'.format(epoch,train_loss))
+    push_loss_curve_to_github(['curve.png','curve_real.png','loss.txt','README.md'])
+
+
+
+
+for epoch in range(len(train_loss_all),len(train_loss_all)+num_epoch):
+    train_loader = DataLoader(train_set, batch_size=100, collate_fn=collate_fn_min_seq, shuffle=True) # 每个epoch shuffle一下
+    print('epoch: ',epoch)
+    start_time = time.time()
+    train_loss = train_one_epoch(model, train_loader, optimizer)
+    end_time = time.time()
+    epoch_time = end_time - start_time
+    print(f"Epoch {epoch} 用时: {epoch_time:.2f} 秒")
+    train_loss_all.append(train_loss)
+    save_dict['params'] = model.state_dict()
+    torch.save(save_dict, os.path.join(save_dir,ckpt_name))
+    print('保存成功')
+    plt.plot(train_loss_all)
+    plt.savefig(os.path.join(save_dir,'loss_{}.pdf'.format(ckpt_name[:-4])))
+    plt.close()
+    visual_idx = visual_HifiDiff_result(valid_set=train_set, model=model, name=ckpt_name[:-4], idx=None)
+    print('结果可视化完成')
     with open('./loss.txt','a') as f:
         f.write('epoch:{} loss: {}\n'.format(epoch,train_loss))
     push_loss_curve_to_github(['curve.png','curve_real.png','loss.txt','README.md'])

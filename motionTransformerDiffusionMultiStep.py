@@ -1537,7 +1537,7 @@ class DiffusionPoint(nn.Module):
         c1 = torch.sqrt(1 - alpha_bar).view(-1, 1, 1)   # (B, 1, 1)
 
         e_rand = torch.randn_like(x_0)  # (B, N, d)
-        e_theta = self.net(c0 * x_0 + c1 * e_rand, beta=beta, context=context)
+        e_theta = self.net.decode(c0 * x_0 + c1 * e_rand, beta=beta, context=context)
 
         loss = F.mse_loss(e_theta.view(-1, point_dim), e_rand.view(-1, point_dim), reduction='mean')
         return loss
@@ -1559,7 +1559,7 @@ class DiffusionPoint(nn.Module):
 
             x_t = traj[t]
             beta = self.var_sched.betas[[t]*batch_size]
-            e_theta = self.net(x_t, beta=beta, context=context)
+            e_theta = self.net.decode(x_t, beta=beta, context=context)
             x_next = c0 * (x_t - c1 * e_theta) + sigma * z
             traj[t-1] = x_next.detach()     # Stop gradient and save trajectory.
             traj[t] = traj[t].cpu()         # Move previous output to CPU memory.
@@ -1725,7 +1725,7 @@ class AutoEncoder(nn.Module):
         Args:
             x:  Point clouds to be encoded, (B, N, d).
         """
-        code, _ = self.encoder(x)# 没有用 sigma ?
+        code = self.encoder.encode(x)# 没有用 sigma ?
         return code
 
     def decode(self, code, num_points, flexibility=0.0, ret_traj=False):
@@ -1759,7 +1759,7 @@ class FrameRepNet(nn.Module):
         # poses:(B,T,N,d)
         # return: (B,T,D) 得到帧表示（可以逐帧还原）
         B,T,N,d = poses.shape
-        D = self.d_out
+        D = self.d_out - 4
         poses = torch.flatten(poses,0,1) # (B*T,N,d)
         poses_rep_seq = self.vae.encode(poses) # (B*T,N,D)
         poses = torch.reshape(poses_rep_seq, (B,T,D))
@@ -1784,7 +1784,7 @@ class FrameRepNet(nn.Module):
 
 
 
-# 只能处理点云数据，骨骼
+# 只能处理点云数据，骨骼旋转角度不行
 class PointNetEncoder(nn.Module):
     def __init__(self, zdim, input_dim, idx_num=None):
         super().__init__()
